@@ -6,8 +6,8 @@ export default function Home() {
   const router = useRouter();
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-zinc-50 to-zinc-100 px-6 py-12 text-zinc-950 dark:from-black dark:to-zinc-950 dark:text-zinc-50">
-      <main className="mx-auto flex min-h-[70vh] w-full max-w-3xl items-center justify-center">
+    <div className="h-screen w-screen bg-gradient-to-b from-zinc-50 to-zinc-100 p-6 text-zinc-950 dark:from-black dark:to-zinc-950 dark:text-zinc-50">
+      <main className="flex h-full w-full items-center justify-center">
         <button
           type="button"
           onClick={() => router.push("/detector")}
