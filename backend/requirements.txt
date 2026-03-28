@@ -3,3 +3,4 @@ uvicorn[standard]==0.34.0
 python-multipart==0.0.20
 numpy==2.2.3
 opencv-python==4.11.0.86
+onnxruntime==1.19.2

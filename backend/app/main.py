@@ -1,11 +1,16 @@
 import os
 import tempfile
+import time
 from typing import Any
+
+from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+
+_DEEPFAKE_SESSION: Any | None = None
 
 app = FastAPI(title="AI Video Detector API")
 
@@ -85,6 +90,143 @@ def _frame_features(frame_bgr: np.ndarray) -> dict[str, float]:
     }
 
 
+def _sigmoid(x: np.ndarray) -> np.ndarray:
+    return 1.0 / (1.0 + np.exp(-x))
+
+
+def _try_load_deepfake_session() -> tuple[Any | None, str | None]:
+    global _DEEPFAKE_SESSION
+
+    if _DEEPFAKE_SESSION is not None:
+        return _DEEPFAKE_SESSION, None
+
+    backend_dir = Path(__file__).resolve().parents[1]
+    candidates: list[str] = []
+
+    env_path = os.environ.get("DEEPFAKE_MODEL_PATH")
+    if env_path:
+        candidates.append(env_path)
+
+    candidates.extend(
+        [
+            str(backend_dir / "models" / "deepfake_v2.onnx" / "model_int8.onnx"),
+            str(backend_dir / "models" / "deepfake_v2.onnx" / "model.onnx"),
+            str(backend_dir / "models" / "deepfake_v2.onnx" / "model_fp16.onnx"),
+            str(backend_dir / "models" / "deepfake_v2.onnx" / "model_quantized.onnx"),
+        ]
+    )
+
+    seen: set[str] = set()
+    candidates = [p for p in candidates if p and not (p in seen or seen.add(p))]
+
+    existing = [p for p in candidates if os.path.exists(p)]
+    if not existing:
+        return None, "DEEPFAKE_MODEL_PATH is not set"
+
+    try:
+        import onnxruntime as ort  # type: ignore
+    except Exception as e:
+        return None, f"onnxruntime not installed: {e}"
+
+    last_err: str | None = None
+    for model_path in existing:
+        try:
+            sess = ort.InferenceSession(model_path, providers=["CPUExecutionProvider"])
+            _DEEPFAKE_SESSION = sess
+            return sess, None
+        except Exception as e:
+            last_err = f"failed to load ONNX model ({model_path}): {e}"
+
+    return None, last_err or "failed to load ONNX model"
+
+
+def _deepfake_score_from_frames(frames_bgr: list[np.ndarray]) -> tuple[float | None, dict[str, Any] | None]:
+    sess, reason = _try_load_deepfake_session()
+    if sess is None:
+        return None, {"name": "deepfake_model_unavailable", "severity": 0.0, "details": reason}
+
+    positive_class = int(os.environ.get("DEEPFAKE_POSITIVE_CLASS", "1"))
+
+    try:
+        inp = sess.get_inputs()[0]
+        input_name = inp.name
+        shape = list(inp.shape)
+    except Exception as e:
+        return None, {"name": "deepfake_model_error", "severity": 0.2, "details": f"invalid model input: {e}"}
+
+    layout = "NCHW"
+    h = 224
+    w = 224
+    if len(shape) == 4:
+        if shape[1] in (1, 3):
+            layout = "NCHW"
+            h = int(shape[2] or 224)
+            w = int(shape[3] or 224)
+        elif shape[3] in (1, 3):
+            layout = "NHWC"
+            h = int(shape[1] or 224)
+            w = int(shape[2] or 224)
+
+    if not frames_bgr:
+        return None, {"name": "deepfake_model_error", "severity": 0.2, "details": "no frames provided"}
+
+    n = min(16, len(frames_bgr))
+    idxs = np.linspace(0, len(frames_bgr) - 1, num=n, dtype=np.int64)
+    probs: list[float] = []
+
+    for i in idxs:
+        frame = frames_bgr[int(i)]
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        resized = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_AREA)
+        x = resized.astype(np.float32) / 255.0
+        if layout == "NCHW":
+            x = np.transpose(x, (2, 0, 1))
+        x = np.expand_dims(x, axis=0)
+
+        try:
+            out = sess.run(None, {input_name: x})
+        except Exception as e:
+            return None, {"name": "deepfake_model_error", "severity": 0.3, "details": f"inference failed: {e}"}
+
+        if not out:
+            continue
+
+        y = np.array(out[0])
+        p: float | None = None
+
+        if y.ndim == 0:
+            p = float(y)
+        elif y.ndim == 1:
+            if y.shape[0] == 1:
+                p = float(y[0])
+            elif y.shape[0] == 2:
+                ex = np.exp(y - np.max(y))
+                soft = ex / np.sum(ex)
+                p = float(soft[positive_class])
+        elif y.ndim == 2:
+            if y.shape[1] == 1:
+                p = float(y[0, 0])
+            elif y.shape[1] == 2:
+                ex = np.exp(y[0] - np.max(y[0]))
+                soft = ex / np.sum(ex)
+                p = float(soft[positive_class])
+
+        if p is None:
+            p = float(_sigmoid(y.reshape(-1)[0]))
+
+        probs.append(float(np.clip(p, 0.0, 1.0)))
+
+    if not probs:
+        return None, {"name": "deepfake_model_error", "severity": 0.3, "details": "model produced no outputs"}
+
+    score = float(np.mean(probs))
+    return score, {
+        "name": "deepfake_model_score",
+        "severity": float(np.clip(score, 0.0, 1.0)),
+        "value": {"frames_used": int(n), "mean_prob": score},
+    }
+
+
 def _analyze_video_file(path: str) -> dict[str, Any]:
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
@@ -138,7 +280,8 @@ def _analyze_video_file(path: str) -> dict[str, Any]:
             "signals": signals,
         }
 
-    feats = [_frame_features(frame) for _, frame in sampled]
+    frames_only = [frame for _, frame in sampled]
+    feats = [_frame_features(frame) for frame in frames_only]
     blurs = np.array([f["blur"] for f in feats], dtype=np.float32)
     hf = np.array([f["hf_energy"] for f in feats], dtype=np.float32)
     means = np.array([f["mean"] for f in feats], dtype=np.float32)
@@ -241,25 +384,37 @@ def _analyze_video_file(path: str) -> dict[str, Any]:
     }
 
     # Weighted average. Cuts and HF inconsistency tend to be stronger tamper hints.
-    score = (
+    tamper_score = (
         0.15 * components["blur"]
         + 0.30 * components["cuts"]
         + 0.15 * components["exposure"]
         + 0.15 * components["contrast"]
         + 0.25 * components["hf_inconsistency"]
     )
-    score = float(np.clip(score, 0.0, 1.0))
+    tamper_score = float(np.clip(tamper_score, 0.0, 1.0))
 
-    if score < 0.35:
+    deepfake_score, deepfake_signal = _deepfake_score_from_frames(frames_only)
+    if deepfake_signal is not None:
+        signals.append(deepfake_signal)
+
+    if deepfake_score is None:
+        combined_score = tamper_score
+    else:
+        combined_score = float(np.clip(0.6 * tamper_score + 0.4 * deepfake_score, 0.0, 1.0))
+
+    if combined_score < 0.35:
         verdict = "likely_real"
-    elif score < 0.7:
+    elif combined_score < 0.7:
         verdict = "suspicious"
     else:
         verdict = "highly_suspicious"
 
     return {
         "verdict": verdict,
-        "score": score,
+        "score": combined_score,
+        "tamper_score": tamper_score,
+        "deepfake_score": deepfake_score,
+        "combined_score": combined_score,
         "signals": signals,
         "metrics": {
             "fps": fps,
@@ -275,5 +430,8 @@ def _analyze_video_file(path: str) -> dict[str, Any]:
             "low_contrast_fraction": contrast_low,
             "hf_energy_std": hf_var,
             "components": components,
+            "tamper_score": tamper_score,
+            "deepfake_score": deepfake_score,
+            "combined_score": combined_score,
         },
     }

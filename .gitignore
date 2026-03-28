@@ -21,6 +21,9 @@ node_modules/
 out/
 dist/
 
+backend/models/
+*.onnx
+
 # Env files
 .env
 .env.*

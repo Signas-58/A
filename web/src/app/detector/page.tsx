@@ -7,6 +7,9 @@ type AnalyzeResponse = {
   content_type: string | null;
   verdict: string;
   score: number | null;
+  tamper_score?: number | null;
+  deepfake_score?: number | null;
+  combined_score?: number | null;
   signals: unknown[];
   metrics?: Record<string, unknown>;
 };
@@ -59,6 +62,35 @@ function verdictStyles(verdict: string): { badge: string; dot: string } {
       "border-zinc-200 bg-zinc-50 text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-200",
     dot: "bg-zinc-400",
   };
+}
+
+function ScoreCard({
+  title,
+  score,
+}: {
+  title: string;
+  score: number | null | undefined;
+}) {
+  const s = score ?? null;
+  const pct = s == null ? 0 : Math.max(0, Math.min(100, Math.round(s * 100)));
+  return (
+    <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{title}</div>
+        <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">{scoreLabel(s)}</div>
+      </div>
+      <div className="mt-2 flex items-baseline justify-between">
+        <div className="text-2xl font-semibold tabular-nums">{s == null ? "—" : s.toFixed(3)}</div>
+        <div className="text-xs text-zinc-500 dark:text-zinc-400">{s == null ? "" : `${pct}%`}</div>
+      </div>
+      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
+        <div
+          className="h-full rounded-full bg-zinc-950 dark:bg-white"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
 }
 
 export default function DetectorPage() {
@@ -215,9 +247,6 @@ export default function DetectorPage() {
                 <div className="mt-6 space-y-6">
                   {(() => {
                     const styles = verdictStyles(result.verdict);
-                    const score = result.score;
-                    const pct =
-                      score == null ? 0 : Math.max(0, Math.min(100, Math.round(score * 100)));
                     return (
                       <div className="grid gap-4 sm:grid-cols-2">
                         <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
@@ -235,33 +264,18 @@ export default function DetectorPage() {
                           </div>
                         </div>
 
-                        <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-                          <div className="flex items-center justify-between">
-                            <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                              Suspiciousness
-                            </div>
-                            <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">
-                              {scoreLabel(score)}
-                            </div>
-                          </div>
-                          <div className="mt-2 flex items-baseline justify-between">
-                            <div className="text-2xl font-semibold tabular-nums">
-                              {score == null ? "—" : score.toFixed(3)}
-                            </div>
-                            <div className="text-xs text-zinc-500 dark:text-zinc-400">
-                              {score == null ? "" : `${pct}%`}
-                            </div>
-                          </div>
-                          <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
-                            <div
-                              className="h-full rounded-full bg-zinc-950 dark:bg-white"
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-                        </div>
+                        <ScoreCard
+                          title="Combined"
+                          score={result.combined_score ?? result.score}
+                        />
                       </div>
                     );
                   })()}
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <ScoreCard title="Tamper" score={result.tamper_score} />
+                    <ScoreCard title="Deepfake" score={result.deepfake_score} />
+                  </div>
 
                   <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
                     <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Signals</div>
