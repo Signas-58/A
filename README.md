@@ -31,6 +31,44 @@ python -m pip install -r backend\requirements.txt
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+### Optional: Deepfake model (ONNX)
+
+The backend can optionally add a model-based `deepfake_score` (frame-based) using ONNX Runtime.
+
+Recommended model:
+
+- https://huggingface.co/onnx-community/Deep-Fake-Detector-v2-Model-ONNX
+
+Download one of the `.onnx` files from the model repo (in the `onnx/` folder). For CPU compatibility, start with:
+
+- `model.onnx` (recommended)
+
+Some quantized models (e.g. `model_int8.onnx`) may fail on certain ONNX Runtime builds with errors like `ConvInteger ... NOT_IMPLEMENTED`.
+
+Place the downloaded file here (folders are local-only and ignored by git):
+
+- `backend/models/deepfake_v2.onnx/model.onnx`
+
+Then start the backend in one of these ways:
+
+1) Auto-detect (no env vars needed)
+
+If you keep the default path above, the backend will attempt to auto-detect and load the model.
+
+2) Explicit path (recommended if you rename the file)
+
+```powershell
+$env:DEEPFAKE_MODEL_PATH = "C:\Users\Munashe\CascadeProjects\ai-video-detector\backend\models\deepfake_v2.onnx\model.onnx"
+$env:DEEPFAKE_POSITIVE_CLASS = "1"
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
+```
+
+If your deepfake predictions look inverted, set:
+
+```powershell
+$env:DEEPFAKE_POSITIVE_CLASS = "0"
+```
+
 ### Frontend
 
 ```powershell
