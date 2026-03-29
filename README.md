@@ -26,7 +26,7 @@ This repo contains a simple web app for uploading a video and running a CPU-frie
 ### Backend
 
 ```powershell
-cd C:\Users\Tsakane\CascadeProjects\ai-video-detector
+cd C:\Users\Tsakane\Projects\ai-video-detector
 python -m venv backend\.venv
 .\backend\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
@@ -61,7 +61,7 @@ If you keep the default path above, the backend will attempt to auto-detect and 
 2) Explicit path (recommended if you rename the file)
 
 ```powershell
-$env:DEEPFAKE_MODEL_PATH = "C:\Users\Tsakane\CascadeProjects\ai-video-detector\backend\models\deepfake_v2.onnx\model.onnx"
+$env:DEEPFAKE_MODEL_PATH = "C:\Users\Tsakane\Projects\ai-video-detector\backend\models\deepfake_v2.onnx\model.onnx"
 $env:DEEPFAKE_POSITIVE_CLASS = "1"
 python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
@@ -75,7 +75,7 @@ $env:DEEPFAKE_POSITIVE_CLASS = "0"
 ### Frontend
 
 ```powershell
-cd C:\Users\Tsakane\CascadeProjects\ai-video-detector\web
+cd C:\Users\Tsakane\Projects\ai-video-detector\web
 npm install
 npm run dev
 ```
