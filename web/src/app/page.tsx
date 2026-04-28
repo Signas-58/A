@@ -11,6 +11,7 @@ export default function Home() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [signinOpen, setSigninOpen] = useState(false);
+  const [signinRole, setSigninRole] = useState<"admin" | "investigator" | "prosecutor" | "custodian" | "clerk">("investigator");
   const [signupOpen, setSignupOpen] = useState(false);
   const [signupRole, setSignupRole] = useState<"investigator" | "prosecutor" | "custodian" | "clerk">("investigator");
 
@@ -247,6 +248,57 @@ export default function Home() {
                     autoComplete="current-password"
                     required
                   />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold">Role</label>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                    <button
+                      type="button"
+                      onClick={() => setSigninRole("admin")}
+                      className={`h-10 rounded-full border px-3 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
+                        signinRole === "admin" ? "border-[#2f7a2f] bg-[#2f7a2f]/10" : "border-zinc-200 bg-white"
+                      }`}
+                    >
+                      Admin
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSigninRole("investigator")}
+                      className={`h-10 rounded-full border px-3 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
+                        signinRole === "investigator" ? "border-[#2f7a2f] bg-[#2f7a2f]/10" : "border-zinc-200 bg-white"
+                      }`}
+                    >
+                      Investigator
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSigninRole("prosecutor")}
+                      className={`h-10 rounded-full border px-3 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
+                        signinRole === "prosecutor" ? "border-[#2f7a2f] bg-[#2f7a2f]/10" : "border-zinc-200 bg-white"
+                      }`}
+                    >
+                      Prosecutor
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSigninRole("custodian")}
+                      className={`h-10 rounded-full border px-3 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
+                        signinRole === "custodian" ? "border-[#2f7a2f] bg-[#2f7a2f]/10" : "border-zinc-200 bg-white"
+                      }`}
+                    >
+                      Custodian
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSigninRole("clerk")}
+                      className={`h-10 rounded-full border px-3 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
+                        signinRole === "clerk" ? "border-[#2f7a2f] bg-[#2f7a2f]/10" : "border-zinc-200 bg-white"
+                      }`}
+                    >
+                      Clerk
+                    </button>
+                  </div>
                 </div>
 
                 <button
