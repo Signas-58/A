@@ -10,9 +10,38 @@ export default function Home() {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [signinOpen, setSigninOpen] = useState(false);
+  const [signupOpen, setSignupOpen] = useState(false);
+  const [signupRole, setSignupRole] = useState<"investigator" | "prosecutor" | "custodian" | "clerk">("investigator");
+
+  const [signupFullName, setSignupFullName] = useState("");
+  const [signupEmail, setSignupEmail] = useState("");
+  const [signupPassword, setSignupPassword] = useState("");
+  const [signupConfirmPassword, setSignupConfirmPassword] = useState("");
+  const [signupOrganization, setSignupOrganization] = useState("");
+  const [signupJustification, setSignupJustification] = useState("");
+  const [signupAgree, setSignupAgree] = useState(false);
+
+  const onSignupSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSignupOpen(false);
+    router.push("/detector");
+  };
+
+  const clearSignup = () => {
+    setSignupFullName("");
+    setSignupEmail("");
+    setSignupPassword("");
+    setSignupConfirmPassword("");
+    setSignupOrganization("");
+    setSignupRole("investigator");
+    setSignupJustification("");
+    setSignupAgree(false);
+  };
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setSigninOpen(false);
     router.push("/detector");
   };
 
@@ -34,7 +63,10 @@ export default function Home() {
               </button>
               <button
                 type="button"
-                onClick={() => setMode("signup")}
+                onClick={() => {
+                  setMode("signup");
+                  setSignupOpen(true);
+                }}
                 className={`rounded-md px-2 py-1 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white/20 hover:shadow-lg hover:shadow-black/20 active:translate-y-0 ${
                   mode === "signup" ? "bg-white/20" : ""
                 }`}
@@ -126,30 +158,82 @@ export default function Home() {
 
           <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 px-6">
             <div className="pointer-events-auto scale-[1.30] rounded-2xl border border-zinc-200 bg-white/80 p-5 shadow-2xl backdrop-blur">
-              <div className="mb-3 flex items-center justify-between">
-                <h2 className="text-base font-semibold">{mode === "signin" ? "Sign in" : "Sign up"}</h2>
-                <div className="text-xs text-zinc-600">(placeholder)</div>
+              <div className="mb-4 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSignupOpen(false);
+                    setSigninOpen(true);
+                    setMode("signin");
+                  }}
+                  className="h-10 rounded-xl bg-[#2f7a2f] text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-[#2f7a2f]/30 active:translate-y-0"
+                >
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode("signup");
+                    setSignupOpen(true);
+                  }}
+                  className="h-10 rounded-xl border border-[#2f7a2f] bg-white text-sm font-semibold text-[#2f7a2f] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#2f7a2f]/5 hover:shadow-xl hover:shadow-[#2f7a2f]/20 active:translate-y-0"
+                >
+                  Sign up
+                </button>
               </div>
 
-              <form onSubmit={onSubmit} className="space-y-3">
-                <div className="space-y-1.5">
-                  <label htmlFor="username" className="text-xs font-medium transition-colors hover:text-[#0b3a1a]">
-                    Username
+              <div className="flex flex-col items-center text-center">
+                <div className="grid h-14 w-14 place-items-center rounded-2xl bg-[#2f7a2f] text-2xl text-white shadow-lg shadow-black/10">
+                  ⚖️
+                </div>
+                <div className="mt-3 text-2xl font-semibold tracking-wide text-[#2f7a2f]">Juriscan</div>
+                <div className="mt-1 text-xs text-zinc-600">AI Digital Evidence Verification</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {signinOpen ? (
+          <div
+            className="fixed inset-0 z-[110] flex items-center justify-center"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={() => setSigninOpen(false)}
+          >
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+
+            <div
+              className="relative mx-4 w-full max-w-md overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-2xl"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="px-10 pt-10 text-center">
+                <div className="mx-auto grid h-16 w-16 place-items-center rounded-2xl bg-[#2f7a2f] text-3xl text-white shadow-lg shadow-black/10">
+                  ⚖️
+                </div>
+                <div className="mt-4 text-3xl font-semibold tracking-wide text-[#2f7a2f]">Juriscan</div>
+                <div className="mt-1 text-sm text-zinc-600">AI Digital Evidence Verification</div>
+              </div>
+
+              <form onSubmit={onSubmit} className="space-y-5 px-10 pb-10 pt-8">
+                <div className="space-y-2">
+                  <label htmlFor="signinEmail" className="text-sm font-semibold">
+                    Email Address
                   </label>
                   <input
-                    id="username"
-                    name="username"
+                    id="signinEmail"
+                    name="signinEmail"
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    className="h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none transition-all duration-200 hover:shadow-2xl hover:shadow-[#0b3a1a]/45 focus:border-[#0b3a1a]/80 focus:ring-4 focus:ring-[#0b3a1a]/45 focus:shadow-2xl focus:shadow-[#0b3a1a]/70"
-                    placeholder="yourname"
-                    autoComplete="username"
+                    type="email"
+                    className="h-12 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 hover:shadow-2xl hover:shadow-[#2f7a2f]/35 focus:border-[#2f7a2f]/80 focus:ring-4 focus:ring-[#2f7a2f]/30 focus:shadow-2xl focus:shadow-[#2f7a2f]/55"
+                    placeholder="Enter your email"
+                    autoComplete="email"
                     required
                   />
                 </div>
 
-                <div className="space-y-1.5">
-                  <label htmlFor="password" className="text-xs font-medium transition-colors hover:text-[#0b3a1a]">
+                <div className="space-y-2">
+                  <label htmlFor="password" className="text-sm font-semibold">
                     Password
                   </label>
                   <input
@@ -158,43 +242,248 @@ export default function Home() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     type="password"
-                    className="h-10 w-full rounded-xl border border-zinc-200 bg-white px-3 text-sm outline-none transition-all duration-200 hover:shadow-2xl hover:shadow-[#0b3a1a]/45 focus:border-[#0b3a1a]/80 focus:ring-4 focus:ring-[#0b3a1a]/45 focus:shadow-2xl focus:shadow-[#0b3a1a]/70"
-                    placeholder="••••••••"
-                    autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                    className="h-12 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 hover:shadow-2xl hover:shadow-[#2f7a2f]/35 focus:border-[#2f7a2f]/80 focus:ring-4 focus:ring-[#2f7a2f]/30 focus:shadow-2xl focus:shadow-[#2f7a2f]/55"
+                    placeholder="Enter your password"
+                    autoComplete="current-password"
                     required
                   />
                 </div>
 
                 <button
                   type="submit"
-                  className="h-10 w-full rounded-xl bg-[#0b3a1a] text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-xl hover:shadow-[#0b3a1a]/30 focus:outline-none focus:ring-4 focus:ring-[#0b3a1a]/25 active:translate-y-0"
+                  className="h-12 w-full rounded-2xl bg-[#2f7a2f] text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-[#2f7a2f]/35 active:translate-y-0"
                 >
-                  {mode === "signin" ? "Continue" : "Create account"}
+                  Login →
                 </button>
 
-                <div className="text-center text-xs text-zinc-600">
-                  {mode === "signin" ? (
-                    <button
-                      type="button"
-                      onClick={() => setMode("signup")}
-                      className="underline underline-offset-4 transition-all duration-200 hover:-translate-y-0.5 hover:text-[#0b3a1a] hover:decoration-[#0b3a1a] hover:decoration-2"
-                    >
-                      Don&apos;t have an account? Sign up
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setMode("signin")}
-                      className="underline underline-offset-4 transition-all duration-200 hover:-translate-y-0.5 hover:text-[#0b3a1a] hover:decoration-[#0b3a1a] hover:decoration-2"
-                    >
-                      Already have an account? Sign in
-                    </button>
-                  )}
+                <div className="pt-1 text-center text-sm">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSigninOpen(false);
+                      setMode("signup");
+                      setSignupOpen(true);
+                    }}
+                    className="text-[#2f7a2f] underline underline-offset-4 transition-all duration-200 hover:-translate-y-0.5 hover:text-[#0b3a1a]"
+                  >
+                    Don&apos;t have an account? Request Access
+                  </button>
                 </div>
               </form>
+
+              <button
+                type="button"
+                onClick={() => setSigninOpen(false)}
+                className="absolute right-3 top-3 rounded-full bg-black/5 px-3 py-2 text-xs font-semibold text-zinc-700 transition-all duration-200 hover:bg-black/10"
+              >
+                Close
+              </button>
             </div>
           </div>
-        </section>
+        ) : null}
+
+        {signupOpen ? (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center"
+            role="dialog"
+            aria-modal="true"
+            onMouseDown={() => setSignupOpen(false)}
+          >
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+
+            <div
+              className="relative mx-4 w-full max-w-lg overflow-hidden rounded-3xl border border-zinc-200 bg-white shadow-2xl"
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <div className="bg-gradient-to-b from-[#0b3a1a] to-[#0b3a1a]/90 px-8 py-8 text-center text-white">
+                <div className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-full bg-white/10">
+                  <span className="text-xl">⚖️</span>
+                </div>
+                <div className="text-xl font-semibold">Juriscan Account Registration</div>
+                <div className="mt-1 text-xs text-white/80">AI-Powered Evidence Verification System</div>
+                <div className="text-xs text-white/80">High Court of Zimbabwe</div>
+              </div>
+
+              <form onSubmit={onSignupSubmit} className="max-h-[70vh] space-y-5 overflow-auto px-8 py-6">
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">
+                    Full Name <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    value={signupFullName}
+                    onChange={(e) => setSignupFullName(e.target.value)}
+                    className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 hover:shadow-2xl hover:shadow-[#0b3a1a]/30 focus:border-[#0b3a1a]/80 focus:ring-4 focus:ring-[#0b3a1a]/35 focus:shadow-2xl focus:shadow-[#0b3a1a]/55"
+                    placeholder="Enter your full name"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">
+                    Email Address <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    value={signupEmail}
+                    onChange={(e) => setSignupEmail(e.target.value)}
+                    type="email"
+                    className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 hover:shadow-2xl hover:shadow-[#0b3a1a]/30 focus:border-[#0b3a1a]/80 focus:ring-4 focus:ring-[#0b3a1a]/35 focus:shadow-2xl focus:shadow-[#0b3a1a]/55"
+                    placeholder="you@example.com"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">
+                    Password <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    value={signupPassword}
+                    onChange={(e) => setSignupPassword(e.target.value)}
+                    type="password"
+                    className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 hover:shadow-2xl hover:shadow-[#0b3a1a]/30 focus:border-[#0b3a1a]/80 focus:ring-4 focus:ring-[#0b3a1a]/35 focus:shadow-2xl focus:shadow-[#0b3a1a]/55"
+                    placeholder="Create a password"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">
+                    Confirm Password <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    value={signupConfirmPassword}
+                    onChange={(e) => setSignupConfirmPassword(e.target.value)}
+                    type="password"
+                    className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 hover:shadow-2xl hover:shadow-[#0b3a1a]/30 focus:border-[#0b3a1a]/80 focus:ring-4 focus:ring-[#0b3a1a]/35 focus:shadow-2xl focus:shadow-[#0b3a1a]/55"
+                    placeholder="Confirm your password"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">
+                    Organization <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    value={signupOrganization}
+                    onChange={(e) => setSignupOrganization(e.target.value)}
+                    className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 hover:shadow-2xl hover:shadow-[#0b3a1a]/30 focus:border-[#0b3a1a]/80 focus:ring-4 focus:ring-[#0b3a1a]/35 focus:shadow-2xl focus:shadow-[#0b3a1a]/55"
+                    placeholder="e.g., High Court Zimbabwe, Prosecutor's Office"
+                    required
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">
+                    Role <span className="text-red-600">*</span>
+                  </label>
+                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                    <button
+                      type="button"
+                      onClick={() => setSignupRole("investigator")}
+                      className={`rounded-full border px-3 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
+                        signupRole === "investigator" ? "border-[#0b3a1a] bg-[#0b3a1a]/10" : "border-zinc-200 bg-white"
+                      }`}
+                    >
+                      Investigator
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSignupRole("prosecutor")}
+                      className={`rounded-full border px-3 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
+                        signupRole === "prosecutor" ? "border-[#0b3a1a] bg-[#0b3a1a]/10" : "border-zinc-200 bg-white"
+                      }`}
+                    >
+                      Prosecutor
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSignupRole("custodian")}
+                      className={`rounded-full border px-3 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
+                        signupRole === "custodian" ? "border-[#0b3a1a] bg-[#0b3a1a]/10" : "border-zinc-200 bg-white"
+                      }`}
+                    >
+                      Custodian
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSignupRole("clerk")}
+                      className={`rounded-full border px-3 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
+                        signupRole === "clerk" ? "border-[#0b3a1a] bg-[#0b3a1a]/10" : "border-zinc-200 bg-white"
+                      }`}
+                    >
+                      Clerk
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold">
+                    Justification for Access <span className="text-red-600">*</span>
+                  </label>
+                  <textarea
+                    value={signupJustification}
+                    onChange={(e) => setSignupJustification(e.target.value)}
+                    className="min-h-[100px] w-full resize-none rounded-2xl border border-zinc-200 bg-white px-4 py-3 text-sm outline-none transition-all duration-200 hover:shadow-2xl hover:shadow-[#0b3a1a]/25 focus:border-[#0b3a1a]/80 focus:ring-4 focus:ring-[#0b3a1a]/35 focus:shadow-2xl focus:shadow-[#0b3a1a]/55"
+                    placeholder="Explain why you need access to the Juriscan evidence verification system..."
+                    required
+                  />
+                </div>
+
+                <label className="flex items-start gap-3 text-xs text-zinc-700">
+                  <input
+                    type="checkbox"
+                    checked={signupAgree}
+                    onChange={(e) => setSignupAgree(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-zinc-300"
+                    required
+                  />
+                  <span>
+                    I agree to the <span className="underline">Terms of Service</span> and <span className="underline">Privacy Policy</span>. I understand that
+                    all actions are audited and chain-of-custody is immutable.
+                  </span>
+                </label>
+
+                <button
+                  type="submit"
+                  className="h-12 w-full rounded-2xl bg-[#0b3a1a] text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-[#0b3a1a]/35 active:translate-y-0"
+                >
+                  Register Account
+                </button>
+
+                <button
+                  type="button"
+                  onClick={clearSignup}
+                  className="h-12 w-full rounded-2xl border border-zinc-200 bg-white text-sm font-semibold text-zinc-700 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 active:translate-y-0"
+                >
+                  Clear Form
+                </button>
+
+                <div className="pt-2 text-center text-xs text-zinc-600">
+                  Already have an account?{" "}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSignupOpen(false);
+                      setMode("signin");
+                    }}
+                    className="font-semibold text-[#0b3a1a] underline underline-offset-4"
+                  >
+                    Sign in here
+                  </button>
+                </div>
+              </form>
+
+              <button
+                type="button"
+                onClick={() => setSignupOpen(false)}
+                className="absolute right-3 top-3 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white transition-all duration-200 hover:bg-white/20"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         <section id="about" className="border-t border-zinc-200 py-14">
           <div className="grid gap-10 md:grid-cols-2">
