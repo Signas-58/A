@@ -53,7 +53,7 @@ export default function CustodianDashboardPage() {
         <aside className="w-[260px] bg-[#1f6b2b] text-white">
           <div className="px-6 py-8">
             <div className="grid h-14 w-14 place-items-center rounded-2xl bg-white/10 text-2xl">📦</div>
-            <div className="mt-5 text-lg font-semibold">Custodian Portal</div>
+            <div className="mt-5 text-lg font-semibold">Forensic Officer Portal</div>
             <div className="text-xs text-white/80">Chain of Custody</div>
           </div>
 
@@ -88,19 +88,19 @@ export default function CustodianDashboardPage() {
         <main className="flex-1 px-8 py-8">
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-semibold text-[#1f6b2b]">Evidence Custodian Dashboard</h1>
+              <h1 className="text-2xl font-semibold text-[#1f6b2b]">Forensic Officer Dashboard</h1>
               <p className="mt-1 text-sm text-zinc-600">Manage chain of custody, seal evidence, and monitor integrity</p>
             </div>
 
             <div className="rounded-2xl border border-zinc-200 bg-white px-5 py-3 shadow-sm">
-              <div className="text-sm font-semibold">Custodian</div>
+              <div className="text-sm font-semibold">Forensic Officer</div>
               <div className="text-xs text-zinc-500">Account details placeholder</div>
             </div>
           </div>
 
           <div className="mt-6 grid gap-4 lg:grid-cols-2">
             <div className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-900">
-              Custodian mode active — all logs are append-only and cryptographically signed (placeholder)
+              Forensic Officer mode active — all logs are append-only and cryptographically signed (placeholder)
             </div>
             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-5 py-4 text-sm text-emerald-900">
               Chain of custody is immutable (placeholder)

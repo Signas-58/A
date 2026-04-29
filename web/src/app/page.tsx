@@ -46,6 +46,8 @@ export default function Home() {
     router.push(
       signinRole === "admin"
         ? "/admin"
+        : signinRole === "prosecutor"
+          ? "/prosecutor"
         : signinRole === "custodian"
           ? "/custodian"
           : signinRole === "clerk"
@@ -295,7 +297,7 @@ export default function Home() {
                         signinRole === "custodian" ? "border-[#2f7a2f] bg-[#2f7a2f]/10" : "border-zinc-200 bg-white"
                       }`}
                     >
-                      Custodian
+                      Forensic Officer
                     </button>
                     <button
                       type="button"
@@ -463,7 +465,7 @@ export default function Home() {
                         signupRole === "custodian" ? "border-[#0b3a1a] bg-[#0b3a1a]/10" : "border-zinc-200 bg-white"
                       }`}
                     >
-                      Custodian
+                      Forensic Officer
                     </button>
                     <button
                       type="button"
