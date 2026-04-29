@@ -43,7 +43,15 @@ export default function Home() {
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setSigninOpen(false);
-    router.push(signinRole === "admin" ? "/admin" : signinRole === "custodian" ? "/custodian" : "/detector");
+    router.push(
+      signinRole === "admin"
+        ? "/admin"
+        : signinRole === "custodian"
+          ? "/custodian"
+          : signinRole === "clerk"
+            ? "/clerk"
+            : "/detector"
+    );
   };
 
   return (
