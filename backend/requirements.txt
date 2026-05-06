@@ -1,6 +1,11 @@
 fastapi==0.115.8
 uvicorn[standard]==0.34.0
 python-multipart==0.0.20
+email-validator==2.2.0
 numpy==2.2.3
 opencv-python==4.11.0.86
 onnxruntime==1.19.2
+
+SQLAlchemy==2.0.36
+PyMySQL==1.1.1
+passlib[bcrypt]==1.7.4

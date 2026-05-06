@@ -7,10 +7,108 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import FastAPI, File, UploadFile
+from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from passlib.context import CryptContext
+from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import DateTime, Integer, String, Text, create_engine, func, select
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 _DEEPFAKE_SESSION: Any | None = None
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except Exception:
+        return default
+
+
+DB_HOST = os.environ.get("DB_HOST", "127.0.0.1")
+DB_PORT = _env_int("DB_PORT", 3306)
+DB_USER = os.environ.get("DB_USER", "root")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
+DB_NAME = os.environ.get("DB_NAME", "ai_video_detector")
+
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}",
+)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class UserAccount(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    role: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    organization: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    justification: Mapped[str | None] = mapped_column(Text, nullable=True)
+    failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+class AccessRequestIn(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    email: EmailStr
+    password: str = Field(min_length=6, max_length=256)
+    role: str = Field(min_length=3, max_length=32)
+    organization: str | None = Field(default=None, max_length=255)
+    justification: str | None = Field(default=None, max_length=5000)
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    email: EmailStr
+    role: str
+    status: str
+    organization: str | None
+    failed_attempts: int
+    created_at: Any | None = None
+    updated_at: Any | None = None
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+def _user_to_out(u: UserAccount) -> UserOut:
+    return UserOut(
+        id=u.id,
+        username=u.username,
+        email=u.email,
+        role=u.role,
+        status=u.status,
+        organization=u.organization,
+        failed_attempts=u.failed_attempts,
+        created_at=u.created_at,
+        updated_at=u.updated_at,
+    )
 
 app = FastAPI(title="AI Video Detector API")
 
@@ -25,7 +123,140 @@ app.add_middleware(
 
 @app.get("/health")
 def health():
-    return {"ok": True}
+    db_ok = True
+    db_error: str | None = None
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql("SELECT 1")
+    except Exception as e:
+        db_ok = False
+        db_error = str(e)
+
+    return {"ok": True, "db_ok": db_ok, "db_error": db_error}
+
+
+@app.on_event("startup")
+def _startup():
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception:
+        pass
+
+
+@app.post("/access-requests", response_model=UserOut)
+def create_access_request(payload: AccessRequestIn, db: Session = Depends(get_db)):
+    try:
+        existing = db.execute(
+            select(UserAccount).where((UserAccount.username == payload.username) | (UserAccount.email == payload.email))
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(status_code=409, detail="user already exists")
+
+        u = UserAccount(
+            username=payload.username,
+            email=str(payload.email),
+            role=payload.role,
+            status="pending",
+            password_hash=pwd_context.hash(payload.password),
+            organization=payload.organization,
+            justification=payload.justification,
+            failed_attempts=0,
+        )
+        db.add(u)
+        db.commit()
+        db.refresh(u)
+        return _user_to_out(u)
+    except HTTPException:
+        raise
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"db error: {e}")
+
+
+@app.get("/admin/access-requests", response_model=list[UserOut])
+def list_access_requests(db: Session = Depends(get_db)):
+    users = db.execute(select(UserAccount).where(UserAccount.status == "pending").order_by(UserAccount.created_at.desc())).scalars().all()
+    return [_user_to_out(u) for u in users]
+
+
+@app.get("/admin/users", response_model=list[UserOut])
+def list_users(db: Session = Depends(get_db)):
+    users = db.execute(select(UserAccount).order_by(UserAccount.created_at.desc())).scalars().all()
+    return [_user_to_out(u) for u in users]
+
+
+def _set_status(user_id: int, new_status: str, db: Session) -> UserOut:
+    u = db.get(UserAccount, user_id)
+    if u is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    u.status = new_status
+    if new_status != "locked":
+        u.failed_attempts = 0
+    db.commit()
+    db.refresh(u)
+    return _user_to_out(u)
+
+
+@app.post("/admin/users/{user_id}/approve", response_model=UserOut)
+def approve_user(user_id: int, db: Session = Depends(get_db)):
+    u = db.get(UserAccount, user_id)
+    if u is None:
+        raise HTTPException(status_code=404, detail="user not found")
+    if u.status != "pending":
+        raise HTTPException(status_code=400, detail="user is not pending")
+    return _set_status(user_id, "active", db)
+
+
+@app.post("/admin/users/{user_id}/block", response_model=UserOut)
+def block_user(user_id: int, db: Session = Depends(get_db)):
+    return _set_status(user_id, "blocked", db)
+
+
+@app.post("/admin/users/{user_id}/unblock", response_model=UserOut)
+def unblock_user(user_id: int, db: Session = Depends(get_db)):
+    return _set_status(user_id, "active", db)
+
+
+@app.post("/admin/users/{user_id}/disable", response_model=UserOut)
+def disable_user(user_id: int, db: Session = Depends(get_db)):
+    return _set_status(user_id, "disabled", db)
+
+
+@app.post("/admin/users/{user_id}/enable", response_model=UserOut)
+def enable_user(user_id: int, db: Session = Depends(get_db)):
+    return _set_status(user_id, "active", db)
+
+
+@app.post("/admin/users/{user_id}/unlock", response_model=UserOut)
+def unlock_user(user_id: int, db: Session = Depends(get_db)):
+    return _set_status(user_id, "active", db)
+
+
+@app.post("/auth/login")
+def login(payload: LoginIn, db: Session = Depends(get_db)):
+    lock_after = _env_int("LOCK_AFTER_FAILS", 5)
+    u = db.execute(select(UserAccount).where(UserAccount.username == payload.username)).scalar_one_or_none()
+    if u is None:
+        raise HTTPException(status_code=401, detail="invalid credentials")
+
+    if u.status in {"blocked", "disabled", "pending"}:
+        raise HTTPException(status_code=403, detail=f"account {u.status}")
+    if u.status == "locked":
+        raise HTTPException(status_code=403, detail="account locked")
+
+    ok = pwd_context.verify(payload.password, u.password_hash)
+    if not ok:
+        u.failed_attempts = int(u.failed_attempts or 0) + 1
+        if u.failed_attempts >= lock_after:
+            u.status = "locked"
+        db.commit()
+        raise HTTPException(status_code=401, detail="invalid credentials")
+
+    u.failed_attempts = 0
+    if u.status != "active":
+        u.status = "active"
+    db.commit()
+    return {"ok": True, "user": _user_to_out(u).model_dump()}
 
 
 @app.post("/analyze")
