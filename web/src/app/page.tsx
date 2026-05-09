@@ -7,13 +7,20 @@ import { useRouter } from "next/navigation";
 export default function Home() {
   const router = useRouter();
 
+  const API_BASE = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
+
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [signinOpen, setSigninOpen] = useState(false);
   const [signinRole, setSigninRole] = useState<"admin" | "investigator" | "prosecutor" | "custodian" | "clerk">("investigator");
+  const [signinError, setSigninError] = useState<string | null>(null);
+  const [signinBusy, setSigninBusy] = useState(false);
   const [signupOpen, setSignupOpen] = useState(false);
   const [signupRole, setSignupRole] = useState<"investigator" | "prosecutor" | "custodian" | "clerk">("investigator");
+  const [signupError, setSignupError] = useState<string | null>(null);
+  const [signupSuccess, setSignupSuccess] = useState<string | null>(null);
+  const [signupBusy, setSignupBusy] = useState(false);
 
   const [signupFullName, setSignupFullName] = useState("");
   const [signupEmail, setSignupEmail] = useState("");
@@ -23,10 +30,44 @@ export default function Home() {
   const [signupJustification, setSignupJustification] = useState("");
   const [signupAgree, setSignupAgree] = useState(false);
 
-  const onSignupSubmit = (e: React.FormEvent) => {
+  const onSignupSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSignupOpen(false);
-    router.push("/detector");
+    setSignupError(null);
+    setSignupSuccess(null);
+
+    if (signupPassword !== signupConfirmPassword) {
+      setSignupError("Passwords do not match.");
+      return;
+    }
+
+    setSignupBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/access-requests`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: signupFullName.trim(),
+          email: signupEmail.trim(),
+          password: signupPassword,
+          role: signupRole,
+          organization: signupOrganization.trim() || null,
+          justification: signupJustification.trim() || null,
+        }),
+      });
+
+      if (!res.ok) {
+        const msg = await res.json().catch(() => null);
+        setSignupError((msg && (msg.detail as string)) || "Registration request failed.");
+        return;
+      }
+
+      setSignupSuccess("Access request submitted. Await admin approval.");
+      clearSignup();
+    } catch {
+      setSignupError("Could not reach backend. Ensure the API is running.");
+    } finally {
+      setSignupBusy(false);
+    }
   };
 
   const clearSignup = () => {
@@ -40,20 +81,46 @@ export default function Home() {
     setSignupAgree(false);
   };
 
-  const onSubmit = (e: React.FormEvent) => {
+  const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSigninOpen(false);
-    router.push(
-      signinRole === "admin"
-        ? "/admin"
-        : signinRole === "prosecutor"
-          ? "/prosecutor"
-        : signinRole === "custodian"
-          ? "/custodian"
-          : signinRole === "clerk"
-            ? "/clerk"
-            : "/detector"
-    );
+    setSigninError(null);
+    setSigninBusy(true);
+
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim(), password }),
+      });
+
+      if (!res.ok) {
+        const msg = await res.json().catch(() => null);
+        setSigninError((msg && (msg.detail as string)) || "Login failed.");
+        return;
+      }
+
+      const data = (await res.json().catch(() => null)) as
+        | { ok?: boolean; user?: { role?: string } }
+        | null;
+      const roleFromServer = (data && data.user && data.user.role) || signinRole;
+
+      setSigninOpen(false);
+      router.push(
+        roleFromServer === "admin"
+          ? "/admin"
+          : roleFromServer === "prosecutor"
+            ? "/prosecutor"
+            : roleFromServer === "custodian"
+              ? "/custodian"
+              : roleFromServer === "clerk"
+                ? "/clerk"
+                : "/detector"
+      );
+    } catch {
+      setSigninError("Could not reach backend. Ensure the API is running.");
+    } finally {
+      setSigninBusy(false);
+    }
   };
 
   return (
@@ -76,6 +143,8 @@ export default function Home() {
                 type="button"
                 onClick={() => {
                   setMode("signup");
+                  setSignupError(null);
+                  setSignupSuccess(null);
                   setSignupOpen(true);
                 }}
                 className={`rounded-md px-2 py-1 transition-all duration-200 hover:-translate-y-0.5 hover:bg-white/20 hover:shadow-lg hover:shadow-black/20 active:translate-y-0 ${
@@ -174,6 +243,7 @@ export default function Home() {
                   type="button"
                   onClick={() => {
                     setSignupOpen(false);
+                    setSigninError(null);
                     setSigninOpen(true);
                     setMode("signin");
                   }}
@@ -185,6 +255,8 @@ export default function Home() {
                   type="button"
                   onClick={() => {
                     setMode("signup");
+                    setSignupError(null);
+                    setSignupSuccess(null);
                     setSignupOpen(true);
                   }}
                   className="h-10 rounded-xl border border-[#2f7a2f] bg-white text-sm font-semibold text-[#2f7a2f] transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#2f7a2f]/5 hover:shadow-xl hover:shadow-[#2f7a2f]/20 active:translate-y-0"
@@ -226,6 +298,12 @@ export default function Home() {
               </div>
 
               <form onSubmit={onSubmit} className="space-y-5 px-10 pb-10 pt-8">
+                {signinError ? (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                    {signinError}
+                  </div>
+                ) : null}
+
                 <div className="space-y-2">
                   <label htmlFor="signinEmail" className="text-sm font-semibold">
                     Email Address
@@ -313,9 +391,12 @@ export default function Home() {
 
                 <button
                   type="submit"
-                  className="h-12 w-full rounded-2xl bg-[#2f7a2f] text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-[#2f7a2f]/35 active:translate-y-0"
+                  disabled={signinBusy}
+                  className={`h-12 w-full rounded-2xl bg-[#2f7a2f] text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-[#2f7a2f]/35 active:translate-y-0 ${
+                    signinBusy ? "cursor-not-allowed opacity-70" : ""
+                  }`}
                 >
-                  Login →
+                  {signinBusy ? "Signing in..." : "Login →"}
                 </button>
 
                 <div className="pt-1 text-center text-sm">
@@ -324,6 +405,8 @@ export default function Home() {
                     onClick={() => {
                       setSigninOpen(false);
                       setMode("signup");
+                      setSignupError(null);
+                      setSignupSuccess(null);
                       setSignupOpen(true);
                     }}
                     className="text-[#2f7a2f] underline underline-offset-4 transition-all duration-200 hover:-translate-y-0.5 hover:text-[#0b3a1a]"
@@ -367,6 +450,17 @@ export default function Home() {
               </div>
 
               <form onSubmit={onSignupSubmit} className="max-h-[70vh] space-y-5 overflow-auto px-8 py-6">
+                {signupError ? (
+                  <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                    {signupError}
+                  </div>
+                ) : null}
+                {signupSuccess ? (
+                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                    {signupSuccess}
+                  </div>
+                ) : null}
+
                 <div className="space-y-2">
                   <label className="text-xs font-semibold">
                     Full Name <span className="text-red-600">*</span>
@@ -508,9 +602,12 @@ export default function Home() {
 
                 <button
                   type="submit"
-                  className="h-12 w-full rounded-2xl bg-[#0b3a1a] text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-[#0b3a1a]/35 active:translate-y-0"
+                  disabled={signupBusy}
+                  className={`h-12 w-full rounded-2xl bg-[#0b3a1a] text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-2xl hover:shadow-[#0b3a1a]/35 active:translate-y-0 ${
+                    signupBusy ? "cursor-not-allowed opacity-70" : ""
+                  }`}
                 >
-                  Register Account
+                  {signupBusy ? "Submitting..." : "Submit Access Request"}
                 </button>
 
                 <button

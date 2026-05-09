@@ -39,27 +39,27 @@ function verdictStyles(verdict: string): { badge: string; dot: string } {
   if (v.includes("high")) {
     return {
       badge:
-        "border-red-200 bg-red-50 text-red-800 dark:border-red-900/50 dark:bg-red-950/40 dark:text-red-200",
+        "border-red-200 bg-red-50 text-red-800",
       dot: "bg-red-500",
     };
   }
   if (v.includes("suspicious")) {
     return {
       badge:
-        "border-amber-200 bg-amber-50 text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-100",
+        "border-amber-200 bg-amber-50 text-amber-900",
       dot: "bg-amber-500",
     };
   }
   if (v.includes("real")) {
     return {
       badge:
-        "border-emerald-200 bg-emerald-50 text-emerald-900 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-100",
+        "border-emerald-200 bg-emerald-50 text-emerald-900",
       dot: "bg-emerald-500",
     };
   }
   return {
     badge:
-      "border-zinc-200 bg-zinc-50 text-zinc-800 dark:border-zinc-800 dark:bg-zinc-900/30 dark:text-zinc-200",
+      "border-zinc-200 bg-zinc-50 text-zinc-800",
     dot: "bg-zinc-400",
   };
 }
@@ -74,18 +74,18 @@ function ScoreCard({
   const s = score ?? null;
   const pct = s == null ? 0 : Math.max(0, Math.min(100, Math.round(s * 100)));
   return (
-    <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
       <div className="flex items-center justify-between">
-        <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{title}</div>
-        <div className="text-xs font-semibold text-zinc-700 dark:text-zinc-200">{scoreLabel(s)}</div>
+        <div className="text-xs font-medium text-zinc-500">{title}</div>
+        <div className="text-xs font-semibold text-zinc-700">{scoreLabel(s)}</div>
       </div>
       <div className="mt-2 flex items-baseline justify-between">
         <div className="text-2xl font-semibold tabular-nums">{s == null ? "—" : s.toFixed(3)}</div>
-        <div className="text-xs text-zinc-500 dark:text-zinc-400">{s == null ? "" : `${pct}%`}</div>
+        <div className="text-xs text-zinc-500">{s == null ? "" : `${pct}%`}</div>
       </div>
-      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-900">
+      <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
         <div
-          className="h-full rounded-full bg-zinc-950 dark:bg-white"
+          className="h-full rounded-full bg-[#0b3a1a]"
           style={{ width: `${pct}%` }}
         />
       </div>
@@ -100,7 +100,8 @@ export default function DetectorPage() {
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
 
   const apiBaseUrl = useMemo(() => {
-    return "http://127.0.0.1:8000";
+    const raw = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
+    return raw.replace(/\/+$/, "");
   }, []);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -137,55 +138,81 @@ export default function DetectorPage() {
     }
   }
 
+  function downloadVerdict(r: AnalyzeResponse) {
+    const report = {
+      generated_at: new Date().toISOString(),
+      filename: r.filename,
+      verdict: r.verdict,
+      score: r.combined_score ?? r.score,
+      tamper_score: r.tamper_score ?? null,
+      deepfake_score: r.deepfake_score ?? null,
+      content_type: r.content_type ?? null,
+      signals: r.signals,
+      metrics: r.metrics ?? null,
+    };
+
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `juriscan-verdict-${(r.filename || "video").replace(/[^a-z0-9._-]+/gi, "_")}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   return (
-    <div className="h-screen w-screen bg-gradient-to-b from-zinc-50 to-zinc-100 p-6 text-zinc-950 dark:from-black dark:to-zinc-950 dark:text-zinc-50">
-      <main className="h-full w-full">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-3xl font-semibold tracking-tight">AI Video Detector</h1>
-          <p className="max-w-2xl text-sm leading-6 text-zinc-600 dark:text-zinc-400">
-            Upload a video and we’ll compute a set of CPU-friendly heuristics to highlight signals that can
-            correlate with heavy editing, recompression, or tampering.
-          </p>
+    <div className="min-h-screen w-screen bg-gradient-to-b from-white to-zinc-50 p-6 text-zinc-950">
+      <main className="mx-auto w-full max-w-6xl">
+        <div className="rounded-3xl border border-[#caa54a] bg-white p-6 shadow-sm">
+          <div className="flex flex-col gap-2">
+            <div className="text-xs font-semibold tracking-widest text-[#0b3a1a]">JURISCAN</div>
+            <h1 className="text-3xl font-semibold tracking-tight text-[#0b3a1a]">AI Digital Evidence Verification</h1>
+            <p className="max-w-3xl text-sm leading-6 text-zinc-700">
+              Upload a video and we’ll compute signals that can correlate with heavy editing, recompression, tampering, or deepfake synthesis.
+            </p>
+          </div>
         </div>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-5">
           <section className="lg:col-span-2">
             <form
               onSubmit={onSubmit}
-              className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950"
+              className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm"
             >
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-sm font-semibold">Upload</h2>
-                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  <h2 className="text-sm font-semibold text-[#0b3a1a]">Upload</h2>
+                  <p className="mt-1 text-xs text-zinc-500">
                     Backend: <span className="font-mono">{apiBaseUrl}</span>
                   </p>
                 </div>
-                <span className="rounded-full border border-zinc-200 px-2 py-1 text-xs text-zinc-600 dark:border-zinc-800 dark:text-zinc-300">
+                <span className="rounded-full border border-zinc-200 px-2 py-1 text-xs text-zinc-600">
                   {isSubmitting ? "Working…" : "Ready"}
                 </span>
               </div>
 
               <label className="mt-5 block text-sm font-medium">
                 Video file
-                <div className="mt-2 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 p-4 dark:border-zinc-800 dark:bg-black">
+                <div className="mt-2 rounded-2xl border border-dashed border-zinc-300 bg-zinc-50 p-4">
                   <input
                     type="file"
                     accept="video/*"
-                    className="block w-full text-sm file:mr-4 file:rounded-lg file:border-0 file:bg-zinc-950 file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-90 dark:file:bg-white dark:file:text-black"
+                    className="block w-full text-sm file:mr-4 file:rounded-lg file:border-0 file:bg-[#0b3a1a] file:px-4 file:py-2 file:text-sm file:font-medium file:text-white hover:file:opacity-90"
                     onChange={(ev) => setFile(ev.target.files?.[0] ?? null)}
                   />
-                  <div className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+                  <div className="mt-3 text-xs text-zinc-600">
                     {file ? (
                       <div className="grid grid-cols-1 gap-1">
                         <div className="truncate">
-                          <span className="text-zinc-700 dark:text-zinc-200">Name:</span> {file.name}
+                          <span className="text-zinc-700">Name:</span> {file.name}
                         </div>
                         <div>
-                          <span className="text-zinc-700 dark:text-zinc-200">Size:</span> {formatBytes(file.size)}
+                          <span className="text-zinc-700">Size:</span> {formatBytes(file.size)}
                         </div>
                         <div className="truncate">
-                          <span className="text-zinc-700 dark:text-zinc-200">Type:</span> {file.type || "—"}
+                          <span className="text-zinc-700">Type:</span> {file.type || "—"}
                         </div>
                       </div>
                     ) : (
@@ -199,7 +226,7 @@ export default function DetectorPage() {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="inline-flex h-11 items-center justify-center rounded-xl bg-zinc-950 px-4 text-sm font-semibold text-white shadow-sm disabled:opacity-60 dark:bg-white dark:text-black"
+                  className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#0b3a1a] px-4 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
                 >
                   {isSubmitting ? "Analyzing…" : "Analyze video"}
                 </button>
@@ -210,37 +237,37 @@ export default function DetectorPage() {
                     setError(null);
                     setResult(null);
                   }}
-                  className="inline-flex h-11 items-center justify-center rounded-xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 disabled:opacity-60 dark:border-zinc-800 dark:bg-zinc-950 dark:text-zinc-100"
+                  className="inline-flex h-11 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 disabled:opacity-60"
                 >
                   Clear result
                 </button>
               </div>
 
               {error ? (
-                <div className="mt-5 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-900/50 dark:bg-red-950/30 dark:text-red-200">
+                <div className="mt-5 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                   {error}
                 </div>
               ) : null}
 
-              <div className="mt-5 rounded-xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600 dark:border-zinc-800 dark:bg-black dark:text-zinc-300">
+              <div className="mt-5 rounded-2xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600">
                 Tip: start the backend first, then refresh this page.
               </div>
             </form>
           </section>
 
           <section className="lg:col-span-3">
-            <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-950">
+            <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
-                  <h2 className="text-sm font-semibold">Analysis</h2>
-                  <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  <h2 className="text-sm font-semibold text-[#0b3a1a]">Analysis</h2>
+                  <p className="mt-1 text-xs text-zinc-500">
                     Verdict, score, and signals derived from sampled frames.
                   </p>
                 </div>
               </div>
 
               {!result ? (
-                <div className="mt-6 rounded-xl border border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-600 dark:border-zinc-800 dark:bg-black dark:text-zinc-300">
+                <div className="mt-6 rounded-2xl border border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-600">
                   No result yet. Upload a video and click “Analyze video”.
                 </div>
               ) : (
@@ -249,8 +276,8 @@ export default function DetectorPage() {
                     const styles = verdictStyles(result.verdict);
                     return (
                       <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-                          <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Verdict</div>
+                        <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                          <div className="text-xs font-medium text-zinc-500">Verdict</div>
                           <div className="mt-2 flex items-center gap-2">
                             <span className={`h-2.5 w-2.5 rounded-full ${styles.dot}`} />
                             <span
@@ -259,8 +286,17 @@ export default function DetectorPage() {
                               {result.verdict}
                             </span>
                           </div>
-                          <div className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+                          <div className="mt-3 text-xs text-zinc-500">
                             File: <span className="font-mono">{result.filename}</span>
+                          </div>
+                          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                            <button
+                              type="button"
+                              onClick={() => downloadVerdict(result)}
+                              className="inline-flex h-10 items-center justify-center rounded-2xl bg-[#0b3a1a] px-4 text-xs font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#0b3a1a]/20 active:translate-y-0"
+                            >
+                              Download verdict
+                            </button>
                           </div>
                         </div>
 
@@ -277,15 +313,15 @@ export default function DetectorPage() {
                     <ScoreCard title="Deepfake" score={result.deepfake_score} />
                   </div>
 
-                  <div className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
-                    <div className="text-xs font-medium text-zinc-500 dark:text-zinc-400">Signals</div>
+                  <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                    <div className="text-xs font-medium text-zinc-500">Signals</div>
                     <div className="mt-2 text-sm">
                       {Array.isArray(result.signals) && result.signals.length > 0 ? (
                         <ul className="space-y-2">
                           {result.signals.slice(0, 10).map((s, i) => (
                             <li
                               key={i}
-                              className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-black dark:text-zinc-200"
+                              className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-700"
                             >
                               <pre className="whitespace-pre-wrap break-words">
                                 {JSON.stringify(s, null, 2)}
@@ -294,19 +330,19 @@ export default function DetectorPage() {
                           ))}
                         </ul>
                       ) : (
-                        <div className="text-sm text-zinc-600 dark:text-zinc-300">No signals reported.</div>
+                        <div className="text-sm text-zinc-600">No signals reported.</div>
                       )}
                     </div>
                     {Array.isArray(result.signals) && result.signals.length > 10 ? (
-                      <div className="mt-3 text-xs text-zinc-500 dark:text-zinc-400">
+                      <div className="mt-3 text-xs text-zinc-500">
                         Showing first 10 signals.
                       </div>
                     ) : null}
                   </div>
 
-                  <details className="rounded-xl border border-zinc-200 p-4 dark:border-zinc-800">
+                  <details className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                     <summary className="cursor-pointer text-sm font-medium">Raw JSON</summary>
-                    <pre className="mt-3 overflow-auto rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-900 dark:border-zinc-800 dark:bg-black dark:text-zinc-100">
+                    <pre className="mt-3 overflow-auto rounded-2xl border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-900">
                       {JSON.stringify(result, null, 2)}
                     </pre>
                   </details>

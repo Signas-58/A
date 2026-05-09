@@ -235,7 +235,9 @@ def unlock_user(user_id: int, db: Session = Depends(get_db)):
 @app.post("/auth/login")
 def login(payload: LoginIn, db: Session = Depends(get_db)):
     lock_after = _env_int("LOCK_AFTER_FAILS", 5)
-    u = db.execute(select(UserAccount).where(UserAccount.username == payload.username)).scalar_one_or_none()
+    u = db.execute(
+        select(UserAccount).where((UserAccount.username == payload.username) | (UserAccount.email == payload.username))
+    ).scalar_one_or_none()
     if u is None:
         raise HTTPException(status_code=401, detail="invalid credentials")
 
@@ -352,12 +354,12 @@ def _try_load_deepfake_session() -> tuple[Any | None, str | None]:
 
     existing = [p for p in candidates if os.path.exists(p)]
     if not existing:
-        return None, "DEEPFAKE_MODEL_PATH is not set"
+        return None, "deepfake model files not found (set DEEPFAKE_MODEL_PATH or add models under backend/models)"
 
     try:
         import onnxruntime as ort  # type: ignore
-    except Exception as e:
-        return None, f"onnxruntime not installed: {e}"
+    except Exception:
+        return None, "onnxruntime not installed (pip install onnxruntime)"
 
     last_err: str | None = None
     for model_path in existing:
