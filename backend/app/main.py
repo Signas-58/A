@@ -142,6 +142,32 @@ def _startup():
     except Exception:
         pass
 
+    try:
+        admin_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@juriscan.co.zw").strip()
+        admin_password = os.environ.get("BOOTSTRAP_ADMIN_PASSWORD", "Admin123")
+
+        if admin_email and admin_password:
+            db = SessionLocal()
+            try:
+                existing = db.execute(select(UserAccount).where(UserAccount.email == admin_email)).scalar_one_or_none()
+                if existing is None:
+                    u = UserAccount(
+                        username="Super Admin",
+                        email=admin_email,
+                        role="admin",
+                        status="active",
+                        password_hash=pwd_context.hash(admin_password),
+                        organization="Juriscan",
+                        justification="bootstrap",
+                        failed_attempts=0,
+                    )
+                    db.add(u)
+                    db.commit()
+            finally:
+                db.close()
+    except Exception:
+        pass
+
 
 @app.post("/access-requests", response_model=UserOut)
 def create_access_request(payload: AccessRequestIn, db: Session = Depends(get_db)):
