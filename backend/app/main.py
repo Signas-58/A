@@ -103,6 +103,7 @@ class UserOut(BaseModel):
 class LoginIn(BaseModel):
     username: str
     password: str
+    role: str | None = None
 
 
 def _user_to_out(u: UserAccount) -> UserOut:
@@ -461,6 +462,9 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
     ).scalar_one_or_none()
     if u is None:
         raise HTTPException(status_code=401, detail="invalid credentials")
+
+    if payload.role and u.role != payload.role:
+        raise HTTPException(status_code=403, detail="Incorrect role")
 
     if u.status in {"blocked", "disabled", "pending"}:
         raise HTTPException(status_code=403, detail=f"account {u.status}")

@@ -90,7 +90,7 @@ export default function Home() {
       const res = await fetch(`${API_BASE}/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username: username.trim(), password }),
+        body: JSON.stringify({ username: username.trim(), password, role: signinRole }),
       });
 
       if (!res.ok) {
