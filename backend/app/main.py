@@ -297,6 +297,8 @@ class VerdictPdfIn(BaseModel):
     tamper_score: float | None = None
     deepfake_score: float | None = None
     signals: list[Any] = Field(default_factory=list)
+    explanations: dict[str, str] | None = None
+    events: list[dict[str, Any]] = Field(default_factory=list)
 
 
 @app.post("/reports/verdict.pdf")
@@ -327,6 +329,56 @@ def verdict_pdf(payload: VerdictPdfIn):
     if payload.deepfake_score is not None:
         pdf.multi_cell(0, 6, f"Deepfake score: {payload.deepfake_score:.3f}")
     pdf.ln(2)
+
+    if payload.explanations:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "Reasons", ln=1)
+        pdf.set_font("Helvetica", "", 10)
+        verdict_reason = payload.explanations.get("verdict") if isinstance(payload.explanations, dict) else None
+        tamper_reason = payload.explanations.get("tamper") if isinstance(payload.explanations, dict) else None
+        deepfake_reason = payload.explanations.get("deepfake") if isinstance(payload.explanations, dict) else None
+
+        if verdict_reason:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.multi_cell(0, 5, "Verdict")
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 5, verdict_reason)
+            pdf.ln(1)
+        if tamper_reason:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.multi_cell(0, 5, "Tamper")
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 5, tamper_reason)
+            pdf.ln(1)
+        if deepfake_reason:
+            pdf.set_font("Helvetica", "B", 10)
+            pdf.multi_cell(0, 5, "Deepfake")
+            pdf.set_font("Helvetica", "", 10)
+            pdf.multi_cell(0, 5, deepfake_reason)
+            pdf.ln(1)
+
+        pdf.ln(1)
+
+    if payload.events:
+        pdf.set_font("Helvetica", "B", 12)
+        pdf.cell(0, 8, "Timestamps (suspicious moments)", ln=1)
+        pdf.set_font("Helvetica", "", 10)
+        for ev in payload.events[:20]:
+            if not isinstance(ev, dict):
+                continue
+            t = ev.get("time_s")
+            fr = ev.get("frame")
+            typ = ev.get("type")
+            if typ == "abrupt_change":
+                mad = ev.get("mad")
+                pdf.multi_cell(0, 5, f"- t={t:.2f}s frame={fr} abrupt change (MAD={mad:.1f})" if isinstance(t, (int, float)) else f"- frame={fr} abrupt change")
+            elif typ == "deepfake_frame":
+                prob = ev.get("prob")
+                pdf.multi_cell(0, 5, f"- t={t:.2f}s frame={fr} deepfake probability={prob:.3f}" if isinstance(t, (int, float)) else f"- frame={fr} deepfake probability")
+            else:
+                pdf.multi_cell(0, 5, f"- {typ}: {str(ev)}")
+
+        pdf.ln(1)
 
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "Signals (top 20)", ln=1)
@@ -491,7 +543,10 @@ def _try_load_deepfake_session() -> tuple[Any | None, str | None]:
     return None, last_err or "failed to load ONNX model"
 
 
-def _deepfake_score_from_frames(frames_bgr: list[np.ndarray]) -> tuple[float | None, dict[str, Any] | None]:
+def _deepfake_score_from_frames(
+    sampled_frames: list[tuple[int, np.ndarray]],
+    fps: float,
+) -> tuple[float | None, dict[str, Any] | None]:
     sess, reason = _try_load_deepfake_session()
     if sess is None:
         return None, {"name": "deepfake_model_unavailable", "severity": 0.0, "details": reason}
@@ -518,15 +573,19 @@ def _deepfake_score_from_frames(frames_bgr: list[np.ndarray]) -> tuple[float | N
             h = int(shape[1] or 224)
             w = int(shape[2] or 224)
 
-    if not frames_bgr:
+    if not sampled_frames:
         return None, {"name": "deepfake_model_error", "severity": 0.2, "details": "no frames provided"}
 
-    n = min(16, len(frames_bgr))
-    idxs = np.linspace(0, len(frames_bgr) - 1, num=n, dtype=np.int64)
+    frames_bgr = [f for _, f in sampled_frames]
+
+    n = min(16, len(sampled_frames))
+    idxs = np.linspace(0, len(sampled_frames) - 1, num=n, dtype=np.int64)
     probs: list[float] = []
+    frame_probs: list[dict[str, Any]] = []
 
     for i in idxs:
-        frame = frames_bgr[int(i)]
+        si = int(i)
+        frame_idx, frame = sampled_frames[si]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         resized = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_AREA)
         x = resized.astype(np.float32) / 255.0
@@ -565,16 +624,26 @@ def _deepfake_score_from_frames(frames_bgr: list[np.ndarray]) -> tuple[float | N
         if p is None:
             p = float(_sigmoid(y.reshape(-1)[0]))
 
-        probs.append(float(np.clip(p, 0.0, 1.0)))
+        p = float(np.clip(p, 0.0, 1.0))
+        probs.append(p)
+        frame_probs.append(
+            {
+                "frame": int(frame_idx),
+                "time_s": float(frame_idx / fps) if fps > 0 else None,
+                "prob": p,
+            }
+        )
 
     if not probs:
         return None, {"name": "deepfake_model_error", "severity": 0.3, "details": "model produced no outputs"}
 
     score = float(np.mean(probs))
+    top_frames = sorted(frame_probs, key=lambda x: float(x.get("prob") or 0.0), reverse=True)[:6]
     return score, {
         "name": "deepfake_model_score",
         "severity": float(np.clip(score, 0.0, 1.0)),
-        "value": {"frames_used": int(n), "mean_prob": score},
+        "value": {"frames_used": int(n), "mean_prob": score, "top_frames": top_frames},
+        "details": "Model estimated probability of synthetic manipulation on sampled frames.",
     }
 
 
@@ -744,7 +813,7 @@ def _analyze_video_file(path: str) -> dict[str, Any]:
     )
     tamper_score = float(np.clip(tamper_score, 0.0, 1.0))
 
-    deepfake_score, deepfake_signal = _deepfake_score_from_frames(frames_only)
+    deepfake_score, deepfake_signal = _deepfake_score_from_frames(sampled, fps)
     if deepfake_signal is not None:
         signals.append(deepfake_signal)
 
@@ -760,6 +829,56 @@ def _analyze_video_file(path: str) -> dict[str, Any]:
     else:
         verdict = "highly_suspicious"
 
+    events: list[dict[str, Any]] = []
+    for c in sorted(cut_candidates, key=lambda x: float(x.get("mad") or 0.0), reverse=True)[:8]:
+        events.append({"type": "abrupt_change", **c})
+
+    if isinstance(deepfake_signal, dict):
+        top_frames = ((deepfake_signal.get("value") or {}) if isinstance(deepfake_signal.get("value"), dict) else {}).get("top_frames")
+        if isinstance(top_frames, list):
+            for tf in top_frames[:6]:
+                if isinstance(tf, dict):
+                    events.append({"type": "deepfake_frame", **tf})
+
+    reasons_tamper: list[str] = []
+    if cut_frac > 0.25:
+        reasons_tamper.append("Frequent abrupt frame-to-frame changes (possible cuts/splicing).")
+    if blur_low_frac > 0.6:
+        reasons_tamper.append("High fraction of blurred frames (possible heavy recompression/smoothing).")
+    if hf_var > 25.0:
+        reasons_tamper.append("Inconsistent high-frequency energy (segment-level re-encoding indicator).")
+    if exposure_clip > 0.15:
+        reasons_tamper.append("Exposure clipping reduces reliability (many near-black/near-white frames).")
+    if contrast_low > 0.5:
+        reasons_tamper.append("Low contrast in many frames (compression/post-processing).")
+    if not reasons_tamper:
+        reasons_tamper.append("No strong tamper heuristics exceeded thresholds in the sampled frames.")
+
+    reasons_deepfake: list[str] = []
+    if deepfake_score is None:
+        reasons_deepfake.append("Deepfake model unavailable; deepfake score omitted.")
+    else:
+        if deepfake_score >= 0.7:
+            reasons_deepfake.append("Model probability is high on sampled frames.")
+        elif deepfake_score >= 0.35:
+            reasons_deepfake.append("Model probability is moderate on sampled frames.")
+        else:
+            reasons_deepfake.append("Model probability is low on sampled frames.")
+
+    reasons_verdict: list[str] = []
+    reasons_verdict.append(f"Combined score computed from tamper and deepfake components: {combined_score:.3f}.")
+    reasons_verdict.append(f"Tamper score: {tamper_score:.3f}.")
+    if deepfake_score is not None:
+        reasons_verdict.append(f"Deepfake score: {deepfake_score:.3f}.")
+    if events:
+        reasons_verdict.append("See timestamps section for the most suspicious sampled moments.")
+
+    explanations = {
+        "tamper": "\n".join(reasons_tamper),
+        "deepfake": "\n".join(reasons_deepfake),
+        "verdict": "\n".join(reasons_verdict),
+    }
+
     return {
         "verdict": verdict,
         "score": combined_score,
@@ -767,6 +886,8 @@ def _analyze_video_file(path: str) -> dict[str, Any]:
         "deepfake_score": deepfake_score,
         "combined_score": combined_score,
         "signals": signals,
+        "explanations": explanations,
+        "events": events,
         "metrics": {
             "fps": fps,
             "frame_count": frame_count,

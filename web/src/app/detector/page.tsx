@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 
 type AnalyzeResponse = {
   filename: string;
@@ -12,6 +13,8 @@ type AnalyzeResponse = {
   combined_score?: number | null;
   signals: unknown[];
   metrics?: Record<string, unknown>;
+  explanations?: { tamper?: string; deepfake?: string; verdict?: string };
+  events?: Array<Record<string, unknown>>;
 };
 
 function formatBytes(bytes: number): string {
@@ -94,6 +97,7 @@ function ScoreCard({
 }
 
 export default function DetectorPage() {
+  const router = useRouter();
   const [file, setFile] = useState<File | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -146,6 +150,8 @@ export default function DetectorPage() {
       tamper_score: r.tamper_score ?? null,
       deepfake_score: r.deepfake_score ?? null,
       signals: r.signals,
+      explanations: r.explanations ?? null,
+      events: r.events ?? [],
     };
 
     const resp = await fetch(`${apiBaseUrl}/reports/verdict.pdf`, {
@@ -183,6 +189,26 @@ export default function DetectorPage() {
   return (
     <div className="min-h-screen w-screen bg-gradient-to-b from-white to-zinc-50 p-6 text-zinc-950">
       <main className="mx-auto w-full max-w-6xl">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+          <div className="text-sm font-semibold text-[#0b3a1a]">Investigator Portal</div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => router.back()}
+              className="rounded-xl border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold text-zinc-700 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 active:translate-y-0"
+            >
+              Back
+            </button>
+            <button
+              type="button"
+              onClick={() => router.push("/")}
+              className="rounded-xl bg-[#0b3a1a] px-4 py-2 text-xs font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#0b3a1a]/20 active:translate-y-0"
+            >
+              Log in
+            </button>
+          </div>
+        </div>
+
         <div className="rounded-3xl border border-[#caa54a] bg-white p-6 shadow-sm">
           <div className="flex flex-col gap-2">
             <div className="text-xs font-semibold tracking-widest text-[#0b3a1a]">JURISCAN</div>
@@ -357,6 +383,62 @@ export default function DetectorPage() {
                       </div>
                     ) : null}
                   </div>
+
+                  {result.explanations ? (
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                      <div className="text-xs font-medium text-zinc-500">Why this verdict</div>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                          <div className="text-xs font-semibold text-[#0b3a1a]">Verdict</div>
+                          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-700">{result.explanations.verdict || "—"}</pre>
+                        </div>
+                        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                          <div className="text-xs font-semibold text-[#0b3a1a]">Tamper</div>
+                          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-700">{result.explanations.tamper || "—"}</pre>
+                        </div>
+                        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
+                          <div className="text-xs font-semibold text-[#0b3a1a]">Deepfake</div>
+                          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-700">{result.explanations.deepfake || "—"}</pre>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+
+                  {Array.isArray(result.events) && result.events.length > 0 ? (
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                      <div className="text-xs font-medium text-zinc-500">Timestamps (suspicious moments)</div>
+                      <div className="mt-3 overflow-hidden rounded-2xl border border-zinc-200">
+                        <table className="w-full text-left text-xs">
+                          <thead className="bg-zinc-50 text-zinc-600">
+                            <tr>
+                              <th className="px-3 py-2 font-semibold">Type</th>
+                              <th className="px-3 py-2 font-semibold">Time (s)</th>
+                              <th className="px-3 py-2 font-semibold">Frame</th>
+                              <th className="px-3 py-2 font-semibold">Details</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-zinc-200 bg-white">
+                            {result.events.slice(0, 20).map((ev, i) => (
+                              <tr key={i}>
+                                <td className="px-3 py-2 text-zinc-700">{String(ev.type ?? "—")}</td>
+                                <td className="px-3 py-2 text-zinc-700 tabular-nums">
+                                  {typeof ev.time_s === "number" ? ev.time_s.toFixed(2) : "—"}
+                                </td>
+                                <td className="px-3 py-2 text-zinc-700 tabular-nums">{typeof ev.frame === "number" ? ev.frame : "—"}</td>
+                                <td className="px-3 py-2 text-zinc-700">
+                                  {ev.type === "abrupt_change" && typeof ev.mad === "number" ? `MAD=${ev.mad.toFixed(1)}` : null}
+                                  {ev.type === "deepfake_frame" && typeof ev.prob === "number" ? `prob=${ev.prob.toFixed(3)}` : null}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {result.events.length > 20 ? (
+                        <div className="mt-2 text-xs text-zinc-500">Showing first 20 events.</div>
+                      ) : null}
+                    </div>
+                  ) : null}
 
                   <details className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
                     <summary className="cursor-pointer text-sm font-medium">Raw JSON</summary>
