@@ -345,7 +345,11 @@ def verdict_pdf(payload: VerdictPdfIn):
     pdf.set_margins(12, 12, 12)
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
-    page_w = float(getattr(pdf, "epw", 0.0) or 0.0)
+    page_w = float(pdf.w - pdf.l_margin - pdf.r_margin)
+
+    def _mc(h: float, txt: Any):
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(page_w, h, _pdf_text(txt))
 
     pdf.set_font("Helvetica", "B", 16)
     pdf.cell(0, 10, "Juriscan Verdict Report", ln=1)
@@ -360,14 +364,14 @@ def verdict_pdf(payload: VerdictPdfIn):
     pdf.cell(0, 8, "Summary", ln=1)
     pdf.set_font("Helvetica", "", 10)
     fn = payload.filename or "(unknown)"
-    pdf.multi_cell(page_w, 6, _pdf_text(f"File: {fn}"))
-    pdf.multi_cell(page_w, 6, _pdf_text(f"Verdict: {payload.verdict}"))
+    _mc(6, f"File: {fn}")
+    _mc(6, f"Verdict: {payload.verdict}")
     if payload.score is not None:
-        pdf.multi_cell(page_w, 6, _pdf_text(f"Combined score: {payload.score:.3f}"))
+        _mc(6, f"Combined score: {payload.score:.3f}")
     if payload.tamper_score is not None:
-        pdf.multi_cell(page_w, 6, _pdf_text(f"Tamper score: {payload.tamper_score:.3f}"))
+        _mc(6, f"Tamper score: {payload.tamper_score:.3f}")
     if payload.deepfake_score is not None:
-        pdf.multi_cell(page_w, 6, _pdf_text(f"Deepfake score: {payload.deepfake_score:.3f}"))
+        _mc(6, f"Deepfake score: {payload.deepfake_score:.3f}")
     pdf.ln(2)
 
     if payload.explanations:
@@ -380,21 +384,21 @@ def verdict_pdf(payload: VerdictPdfIn):
 
         if verdict_reason:
             pdf.set_font("Helvetica", "B", 10)
-            pdf.multi_cell(page_w, 5, _pdf_text("Verdict"))
+            _mc(5, "Verdict")
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(page_w, 5, _pdf_text(verdict_reason))
+            _mc(5, verdict_reason)
             pdf.ln(1)
         if tamper_reason:
             pdf.set_font("Helvetica", "B", 10)
-            pdf.multi_cell(page_w, 5, _pdf_text("Tamper"))
+            _mc(5, "Tamper")
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(page_w, 5, _pdf_text(tamper_reason))
+            _mc(5, tamper_reason)
             pdf.ln(1)
         if deepfake_reason:
             pdf.set_font("Helvetica", "B", 10)
-            pdf.multi_cell(page_w, 5, _pdf_text("Deepfake"))
+            _mc(5, "Deepfake")
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(page_w, 5, _pdf_text(deepfake_reason))
+            _mc(5, deepfake_reason)
             pdf.ln(1)
 
         pdf.ln(1)
@@ -411,28 +415,22 @@ def verdict_pdf(payload: VerdictPdfIn):
             typ = ev.get("type")
             if typ == "abrupt_change":
                 mad = ev.get("mad")
-                pdf.multi_cell(
-                    page_w,
+                _mc(
                     5,
-                    _pdf_text(
-                        f"- t={t:.2f}s frame={fr} abrupt change (MAD={mad:.1f})"
-                        if isinstance(t, (int, float))
-                        else f"- frame={fr} abrupt change"
-                    ),
+                    f"- t={t:.2f}s frame={fr} abrupt change (MAD={mad:.1f})"
+                    if isinstance(t, (int, float))
+                    else f"- frame={fr} abrupt change",
                 )
             elif typ == "deepfake_frame":
                 prob = ev.get("prob")
-                pdf.multi_cell(
-                    page_w,
+                _mc(
                     5,
-                    _pdf_text(
-                        f"- t={t:.2f}s frame={fr} deepfake probability={prob:.3f}"
-                        if isinstance(t, (int, float))
-                        else f"- frame={fr} deepfake probability"
-                    ),
+                    f"- t={t:.2f}s frame={fr} deepfake probability={prob:.3f}"
+                    if isinstance(t, (int, float))
+                    else f"- frame={fr} deepfake probability",
                 )
             else:
-                pdf.multi_cell(page_w, 5, _pdf_text(f"- {typ}: {ev}"))
+                _mc(5, f"- {typ}: {ev}")
 
         pdf.ln(1)
 
@@ -443,7 +441,7 @@ def verdict_pdf(payload: VerdictPdfIn):
         line = _pdf_text(s)
         if len(line) > 240:
             line = line[:240] + "..."
-        pdf.multi_cell(page_w, 5, _pdf_text(f"- {line}"))
+        _mc(5, f"- {line}")
 
     out = pdf.output(dest="S")
     b = out.encode("latin-1") if isinstance(out, str) else bytes(out)
