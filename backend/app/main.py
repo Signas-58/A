@@ -4,6 +4,7 @@ import secrets
 import tempfile
 import time
 from typing import Any
+from io import BytesIO
 
 from pathlib import Path
 
@@ -11,11 +12,14 @@ import cv2
 import numpy as np
 from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import DateTime, Integer, String, Text, create_engine, func, select
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+
+from fpdf import FPDF
 
 _DEEPFAKE_SESSION: Any | None = None
 
@@ -284,6 +288,66 @@ def reset_password(user_id: int, db: Session = Depends(get_db)):
     db.commit()
 
     return ResetPasswordOut(user_id=u.id, temp_password=temp_password)
+
+
+class VerdictPdfIn(BaseModel):
+    filename: str | None = None
+    verdict: str
+    score: float | None = None
+    tamper_score: float | None = None
+    deepfake_score: float | None = None
+    signals: list[Any] = Field(default_factory=list)
+
+
+@app.post("/reports/verdict.pdf")
+def verdict_pdf(payload: VerdictPdfIn):
+    pdf = FPDF(unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=12)
+    pdf.add_page()
+
+    pdf.set_font("Helvetica", "B", 16)
+    pdf.cell(0, 10, "Juriscan Verdict Report", ln=1)
+
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(90, 90, 90)
+    pdf.cell(0, 6, f"Generated: {time.strftime('%Y-%m-%d %H:%M:%S')}", ln=1)
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(2)
+
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Summary", ln=1)
+    pdf.set_font("Helvetica", "", 11)
+    fn = payload.filename or "(unknown)"
+    pdf.multi_cell(0, 6, f"File: {fn}")
+    pdf.multi_cell(0, 6, f"Verdict: {payload.verdict}")
+    if payload.score is not None:
+        pdf.multi_cell(0, 6, f"Combined score: {payload.score:.3f}")
+    if payload.tamper_score is not None:
+        pdf.multi_cell(0, 6, f"Tamper score: {payload.tamper_score:.3f}")
+    if payload.deepfake_score is not None:
+        pdf.multi_cell(0, 6, f"Deepfake score: {payload.deepfake_score:.3f}")
+    pdf.ln(2)
+
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Signals (top 20)", ln=1)
+    pdf.set_font("Helvetica", "", 10)
+    for s in (payload.signals or [])[:20]:
+        try:
+            line = str(s)
+        except Exception:
+            line = "(unprintable signal)"
+        if len(line) > 240:
+            line = line[:240] + "…"
+        pdf.multi_cell(0, 5, f"- {line}")
+
+    out = pdf.output(dest="S")
+    b = out.encode("latin-1") if isinstance(out, str) else bytes(out)
+    buf = BytesIO(b)
+    buf.seek(0)
+
+    safe_name = (fn or "verdict").replace("\\", "_").replace("/", "_")
+    headers = {"Content-Disposition": f"attachment; filename=juriscan-verdict-{safe_name}.pdf"}
+    return StreamingResponse(buf, media_type="application/pdf", headers=headers)
 
 
 @app.post("/auth/login")

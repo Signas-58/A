@@ -9,3 +9,4 @@ onnxruntime==1.19.2
 SQLAlchemy==2.0.36
 PyMySQL==1.1.1
 passlib==1.7.4
+fpdf2==2.7.9

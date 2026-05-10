@@ -138,28 +138,46 @@ export default function DetectorPage() {
     }
   }
 
-  function downloadVerdict(r: AnalyzeResponse) {
-    const report = {
-      generated_at: new Date().toISOString(),
+  async function downloadVerdict(r: AnalyzeResponse) {
+    const payload = {
       filename: r.filename,
       verdict: r.verdict,
       score: r.combined_score ?? r.score,
       tamper_score: r.tamper_score ?? null,
       deepfake_score: r.deepfake_score ?? null,
-      content_type: r.content_type ?? null,
       signals: r.signals,
-      metrics: r.metrics ?? null,
     };
 
-    const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
+    const resp = await fetch(`${apiBaseUrl}/reports/verdict.pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`PDF export failed (${resp.status}): ${text}`);
+    }
+
+    const blob = await resp.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `juriscan-verdict-${(r.filename || "video").replace(/[^a-z0-9._-]+/gi, "_")}.json`;
+    a.download = `juriscan-verdict-${(r.filename || "video").replace(/[^a-z0-9._-]+/gi, "_")}.pdf`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  }
+
+  async function onDownloadVerdict() {
+    if (!result) return;
+    setError(null);
+    try {
+      await downloadVerdict(result);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to download verdict PDF");
+    }
   }
 
   return (
@@ -292,7 +310,7 @@ export default function DetectorPage() {
                           <div className="mt-4 flex flex-col gap-2 sm:flex-row">
                             <button
                               type="button"
-                              onClick={() => downloadVerdict(result)}
+                              onClick={() => void onDownloadVerdict()}
                               className="inline-flex h-10 items-center justify-center rounded-2xl bg-[#0b3a1a] px-4 text-xs font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#0b3a1a]/20 active:translate-y-0"
                             >
                               Download verdict
