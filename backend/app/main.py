@@ -309,6 +309,26 @@ class VerdictPdfIn(BaseModel):
 
 @app.post("/reports/verdict.pdf")
 def verdict_pdf(payload: VerdictPdfIn):
+    def _pdf_break_long_tokens(text: str, max_token_len: int = 60) -> str:
+        parts = text.split(" ")
+        out_parts: list[str] = []
+        for p in parts:
+            if len(p) <= max_token_len:
+                out_parts.append(p)
+                continue
+            chunks = [p[i : i + max_token_len] for i in range(0, len(p), max_token_len)]
+            out_parts.append(" ".join(chunks))
+        return " ".join(out_parts)
+
+    def _pdf_text(v: Any) -> str:
+        try:
+            s = str(v)
+        except Exception:
+            s = "(unprintable)"
+        if not s:
+            return "—"
+        return _pdf_break_long_tokens(s)
+
     pdf = FPDF(unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=12)
     pdf.add_page()
@@ -324,16 +344,16 @@ def verdict_pdf(payload: VerdictPdfIn):
 
     pdf.set_font("Helvetica", "B", 12)
     pdf.cell(0, 8, "Summary", ln=1)
-    pdf.set_font("Helvetica", "", 11)
+    pdf.set_font("Helvetica", "", 10)
     fn = payload.filename or "(unknown)"
-    pdf.multi_cell(0, 6, f"File: {fn}")
-    pdf.multi_cell(0, 6, f"Verdict: {payload.verdict}")
+    pdf.multi_cell(0, 6, _pdf_text(f"File: {fn}"))
+    pdf.multi_cell(0, 6, _pdf_text(f"Verdict: {payload.verdict}"))
     if payload.score is not None:
-        pdf.multi_cell(0, 6, f"Combined score: {payload.score:.3f}")
+        pdf.multi_cell(0, 6, _pdf_text(f"Combined score: {payload.score:.3f}"))
     if payload.tamper_score is not None:
-        pdf.multi_cell(0, 6, f"Tamper score: {payload.tamper_score:.3f}")
+        pdf.multi_cell(0, 6, _pdf_text(f"Tamper score: {payload.tamper_score:.3f}"))
     if payload.deepfake_score is not None:
-        pdf.multi_cell(0, 6, f"Deepfake score: {payload.deepfake_score:.3f}")
+        pdf.multi_cell(0, 6, _pdf_text(f"Deepfake score: {payload.deepfake_score:.3f}"))
     pdf.ln(2)
 
     if payload.explanations:
@@ -346,21 +366,21 @@ def verdict_pdf(payload: VerdictPdfIn):
 
         if verdict_reason:
             pdf.set_font("Helvetica", "B", 10)
-            pdf.multi_cell(0, 5, "Verdict")
+            pdf.multi_cell(0, 5, _pdf_text("Verdict"))
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 5, verdict_reason)
+            pdf.multi_cell(0, 5, _pdf_text(verdict_reason))
             pdf.ln(1)
         if tamper_reason:
             pdf.set_font("Helvetica", "B", 10)
-            pdf.multi_cell(0, 5, "Tamper")
+            pdf.multi_cell(0, 5, _pdf_text("Tamper"))
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 5, tamper_reason)
+            pdf.multi_cell(0, 5, _pdf_text(tamper_reason))
             pdf.ln(1)
         if deepfake_reason:
             pdf.set_font("Helvetica", "B", 10)
-            pdf.multi_cell(0, 5, "Deepfake")
+            pdf.multi_cell(0, 5, _pdf_text("Deepfake"))
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 5, deepfake_reason)
+            pdf.multi_cell(0, 5, _pdf_text(deepfake_reason))
             pdf.ln(1)
 
         pdf.ln(1)
@@ -377,12 +397,28 @@ def verdict_pdf(payload: VerdictPdfIn):
             typ = ev.get("type")
             if typ == "abrupt_change":
                 mad = ev.get("mad")
-                pdf.multi_cell(0, 5, f"- t={t:.2f}s frame={fr} abrupt change (MAD={mad:.1f})" if isinstance(t, (int, float)) else f"- frame={fr} abrupt change")
+                pdf.multi_cell(
+                    0,
+                    5,
+                    _pdf_text(
+                        f"- t={t:.2f}s frame={fr} abrupt change (MAD={mad:.1f})"
+                        if isinstance(t, (int, float))
+                        else f"- frame={fr} abrupt change"
+                    ),
+                )
             elif typ == "deepfake_frame":
                 prob = ev.get("prob")
-                pdf.multi_cell(0, 5, f"- t={t:.2f}s frame={fr} deepfake probability={prob:.3f}" if isinstance(t, (int, float)) else f"- frame={fr} deepfake probability")
+                pdf.multi_cell(
+                    0,
+                    5,
+                    _pdf_text(
+                        f"- t={t:.2f}s frame={fr} deepfake probability={prob:.3f}"
+                        if isinstance(t, (int, float))
+                        else f"- frame={fr} deepfake probability"
+                    ),
+                )
             else:
-                pdf.multi_cell(0, 5, f"- {typ}: {str(ev)}")
+                pdf.multi_cell(0, 5, _pdf_text(f"- {typ}: {ev}"))
 
         pdf.ln(1)
 
@@ -390,13 +426,10 @@ def verdict_pdf(payload: VerdictPdfIn):
     pdf.cell(0, 8, "Signals (top 20)", ln=1)
     pdf.set_font("Helvetica", "", 10)
     for s in (payload.signals or [])[:20]:
-        try:
-            line = str(s)
-        except Exception:
-            line = "(unprintable signal)"
+        line = _pdf_text(s)
         if len(line) > 240:
             line = line[:240] + "…"
-        pdf.multi_cell(0, 5, f"- {line}")
+        pdf.multi_cell(0, 5, _pdf_text(f"- {line}"))
 
     out = pdf.output(dest="S")
     b = out.encode("latin-1") if isinstance(out, str) else bytes(out)
