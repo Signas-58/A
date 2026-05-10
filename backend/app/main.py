@@ -1,4 +1,5 @@
 import os
+import logging
 import tempfile
 import time
 from typing import Any
@@ -16,6 +17,8 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
 _DEEPFAKE_SESSION: Any | None = None
+
+logger = logging.getLogger("juriscan")
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -139,8 +142,8 @@ def health():
 def _startup():
     try:
         Base.metadata.create_all(bind=engine)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("startup: failed to create tables: %s", e)
 
     try:
         admin_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@juriscan.co.zw").strip()
@@ -163,10 +166,13 @@ def _startup():
                     )
                     db.add(u)
                     db.commit()
+                    logger.info("startup: bootstrapped admin user %s", admin_email)
+                else:
+                    logger.info("startup: bootstrap admin already exists: %s", admin_email)
             finally:
                 db.close()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("startup: failed to bootstrap admin user: %s", e)
 
 
 @app.post("/access-requests", response_model=UserOut)
