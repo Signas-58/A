@@ -60,6 +60,7 @@ export default function AdminDashboardPage() {
   const [users, setUsers] = useState<UserOut[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resetInfo, setResetInfo] = useState<{ email: string; tempPassword: string } | null>(null);
 
   async function fetchAll() {
     setLoading(true);
@@ -102,6 +103,29 @@ export default function AdminDashboardPage() {
       await fetchAll();
     } catch (e) {
       setError(e instanceof Error ? e.message : "Action failed");
+      setLoading(false);
+    }
+  }
+
+  async function resetPassword(userId: number, email: string) {
+    setLoading(true);
+    setError(null);
+    setResetInfo(null);
+    try {
+      const res = await fetch(`${apiBaseUrl}/admin/users/${userId}/reset-password`, { method: "POST" });
+      if (!res.ok) {
+        const t = await res.text();
+        throw new Error(`Password reset failed (${res.status}): ${t}`);
+      }
+      const data = (await res.json()) as { temp_password?: string };
+      const tp = (data && data.temp_password) || "";
+      if (!tp) {
+        throw new Error("Password reset failed: missing temp password in response");
+      }
+      setResetInfo({ email, tempPassword: tp });
+      await fetchAll();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Password reset failed");
       setLoading(false);
     }
   }
@@ -196,6 +220,47 @@ export default function AdminDashboardPage() {
           {error ? (
             <div className="mt-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
               {error}
+            </div>
+          ) : null}
+
+          {resetInfo ? (
+            <div className="mt-6 rounded-2xl border border-[#f0b429]/40 bg-[#fff7e6] p-4 text-sm text-[#1f6b2b]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-widest text-[#1f6b2b]">Temporary Password Generated</div>
+                  <div className="mt-2 text-sm">
+                    User: <span className="font-semibold">{resetInfo.email}</span>
+                  </div>
+                  <div className="mt-2 rounded-xl border border-[#f0b429]/40 bg-white px-4 py-3 font-mono text-sm">
+                    {resetInfo.tempPassword}
+                  </div>
+                  <div className="mt-2 text-xs text-zinc-600">
+                    Copy this password now. It is only shown once.
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(resetInfo.tempPassword);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    className="rounded-xl bg-[#1f6b2b] px-4 py-2 text-xs font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#1f6b2b]/25 active:translate-y-0"
+                  >
+                    Copy
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setResetInfo(null)}
+                    className="rounded-xl border border-zinc-200 bg-white px-4 py-2 text-xs font-semibold text-zinc-700 transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 active:translate-y-0"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
             </div>
           ) : null}
 
@@ -416,6 +481,14 @@ export default function AdminDashboardPage() {
                                     Unlock
                                   </button>
                                 ) : null}
+
+                                <button
+                                  type="button"
+                                  onClick={() => void resetPassword(u.id, u.email)}
+                                  className="rounded-xl border border-[#f0b429]/60 bg-white px-3 py-2 text-xs font-semibold text-[#1f6b2b] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 active:translate-y-0"
+                                >
+                                  Reset Password
+                                </button>
                               </div>
                             </td>
                           </tr>

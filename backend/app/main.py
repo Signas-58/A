@@ -1,5 +1,6 @@
 import os
 import logging
+import secrets
 import tempfile
 import time
 from typing import Any
@@ -262,6 +263,27 @@ def enable_user(user_id: int, db: Session = Depends(get_db)):
 @app.post("/admin/users/{user_id}/unlock", response_model=UserOut)
 def unlock_user(user_id: int, db: Session = Depends(get_db)):
     return _set_status(user_id, "active", db)
+
+
+class ResetPasswordOut(BaseModel):
+    user_id: int
+    temp_password: str
+
+
+@app.post("/admin/users/{user_id}/reset-password", response_model=ResetPasswordOut)
+def reset_password(user_id: int, db: Session = Depends(get_db)):
+    u = db.get(UserAccount, user_id)
+    if u is None:
+        raise HTTPException(status_code=404, detail="user not found")
+
+    temp_password = secrets.token_urlsafe(12)
+    u.password_hash = pwd_context.hash(temp_password)
+    u.failed_attempts = 0
+    if u.status != "active":
+        u.status = "active"
+    db.commit()
+
+    return ResetPasswordOut(user_id=u.id, temp_password=temp_password)
 
 
 @app.post("/auth/login")
