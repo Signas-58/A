@@ -20,7 +20,7 @@ _DEEPFAKE_SESSION: Any | None = None
 
 logger = logging.getLogger("juriscan")
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
 
 def _env_int(name: str, default: int) -> int:
