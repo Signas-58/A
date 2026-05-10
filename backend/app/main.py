@@ -326,8 +326,20 @@ def verdict_pdf(payload: VerdictPdfIn):
         except Exception:
             s = "(unprintable)"
         if not s:
-            return "—"
-        return _pdf_break_long_tokens(s)
+            return "-"
+
+        s = (
+            s.replace("\u2026", "...")
+            .replace("…", "...")
+            .replace("—", "-")
+            .replace("–", "-")
+            .replace("“", '"')
+            .replace("”", '"')
+            .replace("’", "'")
+            .replace("‘", "'")
+        )
+        s = _pdf_break_long_tokens(s)
+        return s.encode("latin-1", "replace").decode("latin-1")
 
     pdf = FPDF(unit="mm", format="A4")
     pdf.set_margins(12, 12, 12)
@@ -430,7 +442,7 @@ def verdict_pdf(payload: VerdictPdfIn):
     for s in (payload.signals or [])[:20]:
         line = _pdf_text(s)
         if len(line) > 240:
-            line = line[:240] + "…"
+            line = line[:240] + "..."
         pdf.multi_cell(page_w, 5, _pdf_text(f"- {line}"))
 
     out = pdf.output(dest="S")
