@@ -102,7 +102,12 @@ export default function Home() {
       const data = (await res.json().catch(() => null)) as
         | { ok?: boolean; user?: { role?: string } }
         | null;
-      const roleFromServer = (data && data.user && data.user.role) || signinRole;
+      const actualRole = (data && data.user && data.user.role) || null;
+      if (actualRole && signinRole && actualRole !== signinRole) {
+        setSigninError("Incorrect role");
+        return;
+      }
+      const roleFromServer = actualRole || signinRole;
 
       setSigninOpen(false);
       router.push(
