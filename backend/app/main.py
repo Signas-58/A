@@ -1,3 +1,47 @@
+# Forensic evidence log table
+class EvidenceLog(Base):
+    __tablename__ = "evidence_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    officer: Mapped[str] = mapped_column(String(64), nullable=False)
+    timestamp: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+# Endpoint for forensic officer to verify hash and log evidence
+from fastapi import Form
+@app.post("/forensic/verify-log")
+async def verify_and_log_evidence(
+    file: UploadFile = File(...),
+    sha256: str = Form(...),
+    officer: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    import hashlib
+    suffix = os.path.splitext(file.filename or "upload")[1] or ".mp4"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        temp_path = tmp.name
+        hash_actual = hashlib.sha256()
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            tmp.write(chunk)
+            hash_actual.update(chunk)
+
+    try:
+        actual = hash_actual.hexdigest()
+        match = (actual == sha256)
+        if match:
+            # Log evidence
+            log = EvidenceLog(filename=file.filename or "(unknown)", sha256=actual, officer=officer)
+            db.add(log)
+            db.commit()
+        return {"match": match, "sha256": actual, "logged": match}
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 import os
 import logging
 import secrets
@@ -49,6 +93,16 @@ DATABASE_URL = os.environ.get(
 
 class Base(DeclarativeBase):
     pass
+
+
+# Forensic evidence log table (must be after Base is defined)
+class EvidenceLog(Base):
+    __tablename__ = "evidence_log"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    filename: Mapped[str] = mapped_column(String(255), nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    officer: Mapped[str] = mapped_column(String(64), nullable=False)
+    timestamp: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class UserAccount(Base):
@@ -306,6 +360,7 @@ class VerdictPdfIn(BaseModel):
     signals: list[Any] = Field(default_factory=list)
     explanations: dict[str, str] | None = None
     events: list[dict[str, Any]] = Field(default_factory=list)
+    sha256: str | None = None  # Video hash
 
 
 @app.post("/reports/verdict.pdf")
@@ -366,6 +421,8 @@ def verdict_pdf(payload: VerdictPdfIn):
     pdf.set_font("Helvetica", "", 10)
     fn = payload.filename or "(unknown)"
     _mc(6, f"File: {fn}")
+    if payload.sha256:
+        _mc(6, f"SHA-256: {payload.sha256}")
     _mc(6, f"Verdict: {payload.verdict}")
     if payload.score is not None:
         _mc(6, f"Combined score: {payload.score:.3f}")
@@ -503,20 +560,24 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
 
 @app.post("/analyze")
 async def analyze(file: UploadFile = File(...)):
+    import hashlib
     suffix = os.path.splitext(file.filename or "upload")[1] or ".mp4"
     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
         temp_path = tmp.name
+        sha256 = hashlib.sha256()
         while True:
             chunk = await file.read(1024 * 1024)
             if not chunk:
                 break
             tmp.write(chunk)
+            sha256.update(chunk)
 
     try:
         analysis = _analyze_video_file(temp_path)
         return {
             "filename": file.filename,
             "content_type": file.content_type,
+            "sha256": sha256.hexdigest(),
             **analysis,
         }
     finally:
