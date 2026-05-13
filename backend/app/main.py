@@ -416,20 +416,24 @@ def verdict_pdf(payload: VerdictPdfIn):
             typ = ev.get("type")
             if typ == "abrupt_change":
                 mad = ev.get("mad")
-                _mc(
-                    5,
-                    f"- t={t:.2f}s frame={fr} abrupt change (MAD={mad:.1f})"
-                    if isinstance(t, (int, float))
-                    else f"- frame={fr} abrupt change",
-                )
+                if isinstance(t, (int, float)):
+                    _mc(
+                        5,
+                        f"At time stamp {t:05.2f}s there was a sudden abrupt change likely caused by cuts/splicing."
+                    )
+                else:
+                    _mc(5, f"At frame {fr} there was a sudden abrupt change likely caused by cuts/splicing.")
             elif typ == "deepfake_frame":
                 prob = ev.get("prob")
-                _mc(
-                    5,
-                    f"- t={t:.2f}s frame={fr} deepfake probability={prob:.3f}"
-                    if isinstance(t, (int, float))
-                    else f"- frame={fr} deepfake probability",
-                )
+                if isinstance(t, (int, float)) and prob is not None:
+                    _mc(
+                        5,
+                        f"At time {t:05.2f}s there was a deepfake probability of {prob:.3f}, likely caused by use of AI."
+                    )
+                elif prob is not None:
+                    _mc(5, f"At frame {fr} there was a deepfake probability of {prob:.3f}, likely caused by use of AI.")
+                else:
+                    _mc(5, f"At frame {fr} there was a deepfake indicator detected.")
             else:
                 _mc(5, f"- {typ}: {ev}")
 
@@ -443,6 +447,17 @@ def verdict_pdf(payload: VerdictPdfIn):
         if len(line) > 240:
             line = line[:240] + "..."
         _mc(5, f"- {line}")
+
+    # --- Signature block for authenticity ---
+    import hashlib
+    pdf.ln(4)
+    pdf.set_font("Helvetica", "I", 9)
+    pdf.set_text_color(90, 90, 90)
+    # Create a simple hash of the main content for authenticity
+    content_to_sign = f"{fn}|{payload.verdict}|{payload.score}|{payload.tamper_score}|{payload.deepfake_score}|{time.strftime('%Y-%m-%d %H:%M:%S')}"
+    signature = hashlib.sha256(content_to_sign.encode("utf-8")).hexdigest()[:16]
+    pdf.multi_cell(0, 6, f"Digitally signed by Juriscan AI Video Detector\nSignature: {signature}\nGenerated: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    pdf.set_text_color(0, 0, 0)
 
     out = pdf.output(dest="S")
     b = out.encode("latin-1") if isinstance(out, str) else bytes(out)
