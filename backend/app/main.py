@@ -1,47 +1,3 @@
-# Forensic evidence log table
-class EvidenceLog(Base):
-    __tablename__ = "evidence_log"
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    filename: Mapped[str] = mapped_column(String(255), nullable=False)
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
-    officer: Mapped[str] = mapped_column(String(64), nullable=False)
-    timestamp: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now())
-
-# Endpoint for forensic officer to verify hash and log evidence
-from fastapi import Form
-@app.post("/forensic/verify-log")
-async def verify_and_log_evidence(
-    file: UploadFile = File(...),
-    sha256: str = Form(...),
-    officer: str = Form(...),
-    db: Session = Depends(get_db),
-):
-    import hashlib
-    suffix = os.path.splitext(file.filename or "upload")[1] or ".mp4"
-    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
-        temp_path = tmp.name
-        hash_actual = hashlib.sha256()
-        while True:
-            chunk = await file.read(1024 * 1024)
-            if not chunk:
-                break
-            tmp.write(chunk)
-            hash_actual.update(chunk)
-
-    try:
-        actual = hash_actual.hexdigest()
-        match = (actual == sha256)
-        if match:
-            # Log evidence
-            log = EvidenceLog(filename=file.filename or "(unknown)", sha256=actual, officer=officer)
-            db.add(log)
-            db.commit()
-        return {"match": match, "sha256": actual, "logged": match}
-    finally:
-        try:
-            os.remove(temp_path)
-        except OSError:
-            pass
 import os
 import logging
 import secrets
@@ -54,7 +10,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
-from fastapi import Depends, FastAPI, File, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from passlib.context import CryptContext
@@ -188,6 +144,42 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# Endpoint for forensic officer to verify hash and log evidence
+@app.post("/forensic/verify-log")
+async def verify_and_log_evidence(
+    file: UploadFile = File(...),
+    sha256: str = Form(...),
+    officer: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    import hashlib
+    suffix = os.path.splitext(file.filename or "upload")[1] or ".mp4"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        temp_path = tmp.name
+        hash_actual = hashlib.sha256()
+        while True:
+            chunk = await file.read(1024 * 1024)
+            if not chunk:
+                break
+            tmp.write(chunk)
+            hash_actual.update(chunk)
+
+    try:
+        actual = hash_actual.hexdigest()
+        match = (actual == sha256)
+        if match:
+            # Log evidence
+            log = EvidenceLog(filename=file.filename or "(unknown)", sha256=actual, officer=officer)
+            db.add(log)
+            db.commit()
+        return {"match": match, "sha256": actual, "logged": match}
+    finally:
+        try:
+            os.remove(temp_path)
+        except OSError:
+            pass
 
 
 @app.get("/health")
