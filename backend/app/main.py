@@ -16,6 +16,7 @@ from fastapi.responses import StreamingResponse
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import DateTime, Integer, String, Text, create_engine, func, select
+from typing import List, Optional
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
 
@@ -65,6 +66,18 @@ class UserAccount(Base):
     failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class Report(Base):
+    __tablename__ = "reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    case_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    investigator_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    prosecutor_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    pdf_blob: Mapped[bytes] = mapped_column(Text, nullable=False)
+    pdf_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
@@ -307,9 +320,21 @@ class VerdictPdfIn(BaseModel):
     explanations: dict[str, str] | None = None
     events: list[dict[str, Any]] = Field(default_factory=list)
 
+class ForwardReportIn(BaseModel):
+    case_number: str
+    investigator_id: int
+    prosecutor_id: int | None = None
+    filename: str | None = None
+    verdict: str
+    score: float | None = None
+    tamper_score: float | None = None
+    deepfake_score: float | None = None
+    signals: list[Any] = Field(default_factory=list)
+    explanations: dict[str, str] | None = None
+    events: list[dict[str, Any]] = Field(default_factory=list)
 
-@app.post("/reports/verdict.pdf")
-def verdict_pdf(payload: VerdictPdfIn):
+
+def _pdf_text(v: Any) -> str:
     def _pdf_break_long_tokens(text: str, max_token_len: int = 60) -> str:
         parts = text.split(" ")
         out_parts: list[str] = []
@@ -320,28 +345,28 @@ def verdict_pdf(payload: VerdictPdfIn):
             chunks = [p[i : i + max_token_len] for i in range(0, len(p), max_token_len)]
             out_parts.append(" ".join(chunks))
         return " ".join(out_parts)
+    try:
+        s = str(v)
+    except Exception:
+        s = "(unprintable)"
+    if not s:
+        return "-"
+    s = (
+        s.replace("\u2026", "...")
+        .replace("…", "...")
+        .replace("—", "-")
+        .replace("–", "-")
+        .replace("“", '"')
+        .replace("”", '"')
+        .replace("’", "'")
+        .replace("‘", "'")
+    )
+    s = _pdf_break_long_tokens(s)
+    return s.encode("latin-1", "replace").decode("latin-1")
 
-    def _pdf_text(v: Any) -> str:
-        try:
-            s = str(v)
-        except Exception:
-            s = "(unprintable)"
-        if not s:
-            return "-"
 
-        s = (
-            s.replace("\u2026", "...")
-            .replace("…", "...")
-            .replace("—", "-")
-            .replace("–", "-")
-            .replace("“", '"')
-            .replace("”", '"')
-            .replace("’", "'")
-            .replace("‘", "'")
-        )
-        s = _pdf_break_long_tokens(s)
-        return s.encode("latin-1", "replace").decode("latin-1")
-
+@app.post("/reports/verdict.pdf")
+def verdict_pdf(payload: VerdictPdfIn):
     pdf = FPDF(unit="mm", format="A4")
     pdf.set_margins(12, 12, 12)
     pdf.set_auto_page_break(auto=True, margin=12)
@@ -408,30 +433,26 @@ def verdict_pdf(payload: VerdictPdfIn):
         pdf.set_font("Helvetica", "B", 12)
         pdf.cell(0, 8, "Timestamps (suspicious moments)", ln=1)
         pdf.set_font("Helvetica", "", 10)
-        for ev in payload.events[:20]:
-            if not isinstance(ev, dict):
-                continue
+        def _format_event(ev: dict) -> str:
             t = ev.get("time_s")
             fr = ev.get("frame")
             typ = ev.get("type")
             if typ == "abrupt_change":
                 mad = ev.get("mad")
-                _mc(
-                    5,
-                    f"- t={t:.2f}s frame={fr} abrupt change (MAD={mad:.1f})"
-                    if isinstance(t, (int, float))
-                    else f"- frame={fr} abrupt change",
-                )
-            elif typ == "deepfake_frame":
+                if isinstance(t, (int, float)):
+                    return f"Abrupt change detected at {t:.2f}s (frame {fr}) with MAD={mad:.1f}, suggesting possible tampering."
+                return f"Abrupt change detected at frame {fr} with MAD={mad:.1f}, suggesting possible tampering."
+            if typ == "deepfake_frame":
                 prob = ev.get("prob")
-                _mc(
-                    5,
-                    f"- t={t:.2f}s frame={fr} deepfake probability={prob:.3f}"
-                    if isinstance(t, (int, float))
-                    else f"- frame={fr} deepfake probability",
-                )
-            else:
-                _mc(5, f"- {typ}: {ev}")
+                if isinstance(t, (int, float)):
+                    return f"Deepfake probability of {prob:.3f} observed at {t:.2f}s (frame {fr})."
+                return f"Deepfake probability of {prob:.3f} observed at frame {fr}."
+            return f"Event type {typ} at frame {fr}."
+        for ev in payload.events[:20]:
+            if not isinstance(ev, dict):
+                continue
+            line = _format_event(ev)
+            _mc(5, f"- {line}")
 
         pdf.ln(1)
 
@@ -445,13 +466,96 @@ def verdict_pdf(payload: VerdictPdfIn):
         _mc(5, f"- {line}")
 
     out = pdf.output(dest="S")
-    b = out.encode("latin-1") if isinstance(out, str) else bytes(out)
+    b = out.encode("latin-1", "replace") if isinstance(out, str) else bytes(out)
     buf = BytesIO(b)
     buf.seek(0)
 
     safe_name = (fn or "verdict").replace("\\", "_").replace("/", "_")
     headers = {"Content-Disposition": f"attachment; filename=juriscan-verdict-{safe_name}.pdf"}
     return StreamingResponse(buf, media_type="application/pdf", headers=headers)
+
+
+@app.post("/reports/forward")
+def forward_report(payload: ForwardReportIn, db: Session = Depends(get_db)):
+    prosecutor_id = payload.prosecutor_id
+    if prosecutor_id is None:
+        prov = db.execute(select(UserAccount).where(UserAccount.role == "prosecutor")).scalar_one_or_none()
+        if prov is None:
+            raise HTTPException(status_code=404, detail="No prosecutor user found")
+        prosecutor_id = prov.id
+
+    temp_payload = VerdictPdfIn(
+        filename=payload.filename,
+        verdict=payload.verdict,
+        score=payload.score,
+        tamper_score=payload.tamper_score,
+        deepfake_score=payload.deepfake_score,
+        signals=payload.signals,
+        explanations=payload.explanations,
+        events=payload.events,
+    )
+    response = verdict_pdf(temp_payload)
+    buf = response.body_iterator.__self__ if hasattr(response.body_iterator, "__self__") else None
+    if buf is None:
+        out = response.body
+        buf = BytesIO(out)
+    pdf_bytes = buf.getvalue()
+    pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
+
+    new_report = Report(
+        case_number=payload.case_number,
+        investigator_id=payload.investigator_id,
+        prosecutor_id=prosecutor_id,
+        pdf_blob=pdf_bytes,
+        pdf_hash=pdf_hash,
+    )
+    db.add(new_report)
+    db.commit()
+    db.refresh(new_report)
+    return {
+        "report_id": new_report.id,
+        "case_number": new_report.case_number,
+        "pdf_hash": new_report.pdf_hash,
+        "message": "Report forwarded to prosecutor",
+    }
+
+# New Pydantic model for report listing
+class ReportOut(BaseModel):
+    id: int
+    case_number: str
+    investigator_id: int
+    prosecutor_id: int
+    pdf_hash: str
+    created_at: Any
+
+# Endpoint to list reports with optional filters
+@app.get("/reports", response_model=List[ReportOut])
+def list_reports(investigator_id: Optional[int] = None, prosecutor_id: Optional[int] = None, db: Session = Depends(get_db)):
+    query = select(Report)
+    if investigator_id is not None:
+        query = query.where(Report.investigator_id == investigator_id)
+    if prosecutor_id is not None:
+        query = query.where(Report.prosecutor_id == prosecutor_id)
+    reports = db.execute(query).scalars().all()
+    return [ReportOut(
+        id=r.id,
+        case_number=r.case_number,
+        investigator_id=r.investigator_id,
+        prosecutor_id=r.prosecutor_id,
+        pdf_hash=r.pdf_hash,
+        created_at=r.created_at,
+    ) for r in reports]
+
+# Endpoint to stream a stored PDF by report id
+@app.get("/reports/{report_id}/pdf")
+def get_report_pdf(report_id: int, db: Session = Depends(get_db)):
+    rpt = db.get(Report, report_id)
+    if not rpt:
+        raise HTTPException(status_code=404, detail="Report not found")
+    buf = BytesIO(rpt.pdf_blob)
+    headers = {"Content-Disposition": f"attachment; filename=case-{rpt.case_number}.pdf"}
+    return StreamingResponse(buf, media_type="application/pdf", headers=headers)
+
 
 
 @app.post("/auth/login")
@@ -701,6 +805,15 @@ def _deepfake_score_from_frames(
         "details": "Model estimated probability of synthetic manipulation on sampled frames.",
     }
 
+# Helper to generate user‑friendly sentence for abrupt‑change events
+def _format_abrupt_change(event: dict) -> str:
+    t = event.get("time_s")
+    f = event.get("frame")
+    mad = event.get("mad")
+    if t is not None:
+        return f"Abrupt change detected at {t:.2f}s (frame {f}) with MAD={mad:.1f}, which may indicate tampering."
+    return f"Abrupt change detected at frame {f} with MAD={mad:.1f}, which may indicate tampering."
+
 
 def _analyze_video_file(path: str) -> dict[str, Any]:
     cap = cv2.VideoCapture(path)
@@ -896,29 +1009,33 @@ def _analyze_video_file(path: str) -> dict[str, Any]:
                     events.append({"type": "deepfake_frame", **tf})
 
     reasons_tamper: list[str] = []
-    if cut_frac > 0.25:
-        reasons_tamper.append("Frequent abrupt frame-to-frame changes (possible cuts/splicing).")
+    # Add natural language sentences for the most significant abrupt‑change events
+    if cut_candidates:
+        top_abrupt = sorted(cut_candidates, key=lambda x: float(x.get("mad") or 0), reverse=True)[:3]
+        for ev in top_abrupt:
+            reasons_tamper.append(_format_abrupt_change(ev))
+    # Other heuristics expressed in friendly language
     if blur_low_frac > 0.6:
-        reasons_tamper.append("High fraction of blurred frames (possible heavy recompression/smoothing).")
+        reasons_tamper.append(f"A high fraction ({blur_low_frac:.0%}) of frames appear blurred, which can indicate heavy recompression or smoothing.")
     if hf_var > 25.0:
-        reasons_tamper.append("Inconsistent high-frequency energy (segment-level re-encoding indicator).")
+        reasons_tamper.append(f"High variability in high‑frequency energy ({hf_var:.1f}) suggests segment‑level re‑encoding.")
     if exposure_clip > 0.15:
-        reasons_tamper.append("Exposure clipping reduces reliability (many near-black/near-white frames).")
+        reasons_tamper.append(f"{exposure_clip:.0%} of frames are near‑black or near‑white, reducing analysis reliability.")
     if contrast_low > 0.5:
-        reasons_tamper.append("Low contrast in many frames (compression/post-processing).")
+        reasons_tamper.append(f"{contrast_low:.0%} of frames have low contrast, often caused by compression or post‑processing.")
     if not reasons_tamper:
-        reasons_tamper.append("No strong tamper heuristics exceeded thresholds in the sampled frames.")
+        reasons_tamper.append("No strong tampering heuristics exceeded thresholds in the sampled frames.")
 
     reasons_deepfake: list[str] = []
     if deepfake_score is None:
-        reasons_deepfake.append("Deepfake model unavailable; deepfake score omitted.")
+        reasons_deepfake.append("Deep‑fake detection model not found – no deep‑fake score was calculated.")
     else:
         if deepfake_score >= 0.7:
-            reasons_deepfake.append("Model probability is high on sampled frames.")
+            reasons_deepfake.append(f"Deep‑fake model confidence is {deepfake_score:.2f}, indicating a high likelihood of synthetic manipulation.")
         elif deepfake_score >= 0.35:
-            reasons_deepfake.append("Model probability is moderate on sampled frames.")
+            reasons_deepfake.append(f"Deep‑fake model confidence is {deepfake_score:.2f}, indicating a moderate likelihood of synthetic manipulation.")
         else:
-            reasons_deepfake.append("Model probability is low on sampled frames.")
+            reasons_deepfake.append(f"Deep‑fake model confidence is {deepfake_score:.2f}, indicating a low likelihood of synthetic manipulation.")
 
     reasons_verdict: list[str] = []
     reasons_verdict.append(f"Combined score computed from tamper and deepfake components: {combined_score:.3f}.")
