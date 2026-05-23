@@ -77,10 +77,15 @@ class Report(Base):
     case_number: Mapped[str] = mapped_column(String(64), nullable=False)
     investigator_id: Mapped[int] = mapped_column(Integer, nullable=False)
     prosecutor_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    custodian_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     pdf_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     pdf_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     verdict: Mapped[str | None] = mapped_column(String(128), nullable=True)
     filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    score: Mapped[float | None] = mapped_column(nullable=True)
+    report_status: Mapped[str] = mapped_column(String(64), nullable=False, default="forwarded_to_prosecutor")
+    override_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    override_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -234,6 +239,28 @@ def _startup():
             conn.commit()
     except Exception as e:
         logger.warning("startup: reports column migration failed: %s", e)
+
+    # Migration: add triage + override columns to reports if needed
+    try:
+        with engine.connect() as conn:
+            existing = {row[0] for row in conn.exec_driver_sql(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reports'"
+            ).fetchall()}
+            migrations = {
+                "custodian_id":   "ALTER TABLE reports ADD COLUMN custodian_id INT NULL",
+                "score":          "ALTER TABLE reports ADD COLUMN score FLOAT NULL",
+                "report_status":  "ALTER TABLE reports ADD COLUMN report_status VARCHAR(64) NOT NULL DEFAULT 'forwarded_to_prosecutor'",
+                "override_by":    "ALTER TABLE reports ADD COLUMN override_by INT NULL",
+                "override_notes": "ALTER TABLE reports ADD COLUMN override_notes TEXT NULL",
+            }
+            for col, sql in migrations.items():
+                if col not in existing:
+                    conn.exec_driver_sql(sql)
+                    logger.info("startup: added reports.%s column", col)
+            conn.commit()
+    except Exception as e:
+        logger.warning("startup: reports triage migration failed: %s", e)
 
     # Migration: add missing columns to disclosures if needed
     try:
@@ -580,6 +607,17 @@ def list_clerks(db: Session = Depends(get_db)):
     users = db.execute(
         select(UserAccount)
         .where(UserAccount.role == "clerk", UserAccount.status == "active")
+        .order_by(UserAccount.username)
+    ).scalars().all()
+    return [_user_to_out(u) for u in users]
+
+
+@app.get("/users/custodians", response_model=list[UserOut])
+def list_custodians(db: Session = Depends(get_db)):
+    """Return all active forensic officer (custodian) accounts."""
+    users = db.execute(
+        select(UserAccount)
+        .where(UserAccount.role == "custodian", UserAccount.status == "active")
         .order_by(UserAccount.username)
     ).scalars().all()
     return [_user_to_out(u) for u in users]
@@ -933,19 +971,19 @@ def _generate_case_number() -> str:
 
 @app.post("/reports/forward")
 def forward_report(payload: ForwardReportIn, db: Session = Depends(get_db)):
-    prosecutor_id = payload.prosecutor_id
-    if prosecutor_id is None:
-        prov = db.execute(
-            select(UserAccount).where(UserAccount.role == "prosecutor", UserAccount.status == "active")
-        ).scalar_one_or_none()
-        if prov is None:
-            raise HTTPException(status_code=404, detail="No active prosecutor found")
-        prosecutor_id = prov.id
+    """Triage routing:
+    - score < 0.30 (likely real) → forward to prosecutor
+    - score >= 0.30 (suspicious/fake) → forward to forensic officer for manual review
+    """
+    FORENSIC_THRESHOLD = 0.30
+    score = payload.score  # 0.0–1.0 float
 
-    # Auto-generate case number if not supplied
+    # Determine if forensic review is needed
+    needs_forensic = (score is not None and score >= FORENSIC_THRESHOLD)
+
     case_number = payload.case_number or _generate_case_number()
 
-    # Build PDF bytes directly (no StreamingResponse iteration)
+    # Build PDF bytes
     pdf_payload = VerdictPdfIn(
         filename=payload.filename,
         verdict=payload.verdict,
@@ -959,34 +997,150 @@ def forward_report(payload: ForwardReportIn, db: Session = Depends(get_db)):
     pdf_bytes = _build_pdf_bytes(pdf_payload)
     pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
 
-    new_report = Report(
-        case_number=case_number,
-        investigator_id=payload.investigator_id,
-        prosecutor_id=prosecutor_id,
-        pdf_blob=pdf_bytes,
-        pdf_hash=pdf_hash,
-        verdict=payload.verdict,
-        filename=payload.filename,
-    )
-    db.add(new_report)
-    db.commit()
-    db.refresh(new_report)
-    return {
-        "report_id": new_report.id,
-        "case_number": new_report.case_number,
-        "pdf_hash": new_report.pdf_hash,
-        "verdict": new_report.verdict,
-        "message": "Report forwarded to prosecutor",
-    }
+    if needs_forensic:
+        # Route to forensic officer (custodian)
+        custodian = db.execute(
+            select(UserAccount).where(UserAccount.role == "custodian", UserAccount.status == "active")
+        ).scalar_one_or_none()
+        custodian_id = custodian.id if custodian else None
+
+        # Still need a prosecutor_id for schema (use default or payload)
+        prosecutor_id = payload.prosecutor_id
+        if prosecutor_id is None:
+            prov = db.execute(
+                select(UserAccount).where(UserAccount.role == "prosecutor", UserAccount.status == "active")
+            ).scalar_one_or_none()
+            prosecutor_id = prov.id if prov else 0
+
+        new_report = Report(
+            case_number=case_number,
+            investigator_id=payload.investigator_id,
+            prosecutor_id=prosecutor_id,
+            custodian_id=custodian_id,
+            pdf_blob=pdf_bytes,
+            pdf_hash=pdf_hash,
+            verdict=payload.verdict,
+            filename=payload.filename,
+            score=score,
+            report_status="pending_forensic_review",
+        )
+        db.add(new_report)
+        db.commit()
+        db.refresh(new_report)
+        return {
+            "report_id": new_report.id,
+            "case_number": new_report.case_number,
+            "pdf_hash": new_report.pdf_hash,
+            "verdict": new_report.verdict,
+            "report_status": new_report.report_status,
+            "routed_to": "forensic_officer",
+            "message": f"Score {score:.0%} >= 30% — routed to forensic officer for manual review",
+        }
+    else:
+        # Route directly to prosecutor
+        prosecutor_id = payload.prosecutor_id
+        if prosecutor_id is None:
+            prov = db.execute(
+                select(UserAccount).where(UserAccount.role == "prosecutor", UserAccount.status == "active")
+            ).scalar_one_or_none()
+            if prov is None:
+                raise HTTPException(status_code=404, detail="No active prosecutor found")
+            prosecutor_id = prov.id
+
+        new_report = Report(
+            case_number=case_number,
+            investigator_id=payload.investigator_id,
+            prosecutor_id=prosecutor_id,
+            pdf_blob=pdf_bytes,
+            pdf_hash=pdf_hash,
+            verdict=payload.verdict,
+            filename=payload.filename,
+            score=score,
+            report_status="forwarded_to_prosecutor",
+        )
+        db.add(new_report)
+        db.commit()
+        db.refresh(new_report)
+        return {
+            "report_id": new_report.id,
+            "case_number": new_report.case_number,
+            "pdf_hash": new_report.pdf_hash,
+            "verdict": new_report.verdict,
+            "report_status": new_report.report_status,
+            "routed_to": "prosecutor",
+            "message": f"Score {score:.0%} < 30% — forwarded directly to prosecutor",
+        }
+
+
+class ForensicReviewIn(BaseModel):
+    action: str   # "accept_override" | "reject_override"
+    custodian_id: int
+    override_notes: str | None = None
+
+
+@app.post("/reports/{report_id}/forensic-review")
+def forensic_review(
+    report_id: int,
+    payload: ForensicReviewIn,
+    db: Session = Depends(get_db),
+):
+    """Forensic officer accepts or rejects a manual override.
+    - accept_override → report routed to clerk (status=override_accepted)
+    - reject_override → report sent to prosecutor as not admissible (status=override_rejected)
+    """
+    report = db.get(Report, report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if report.report_status != "pending_forensic_review":
+        raise HTTPException(status_code=400, detail=f"Report is not pending forensic review (status={report.report_status})")
+
+    allowed_actions = {"accept_override", "reject_override"}
+    if payload.action not in allowed_actions:
+        raise HTTPException(status_code=400, detail=f"action must be one of {allowed_actions}")
+
+    report.override_by = payload.custodian_id
+    report.override_notes = payload.override_notes or ""
+
+    if payload.action == "accept_override":
+        report.report_status = "override_accepted"
+        db.commit()
+        db.refresh(report)
+        custodian = db.get(UserAccount, payload.custodian_id)
+        return {
+            "report_id": report.id,
+            "case_number": report.case_number,
+            "report_status": report.report_status,
+            "routed_to": "clerk",
+            "overridden_by": custodian.username if custodian else f"ID#{payload.custodian_id}",
+            "message": "Manual override ACCEPTED — report forwarded to clerk as manually verified",
+        }
+    else:  # reject_override
+        report.report_status = "override_rejected"
+        db.commit()
+        db.refresh(report)
+        custodian = db.get(UserAccount, payload.custodian_id)
+        return {
+            "report_id": report.id,
+            "case_number": report.case_number,
+            "report_status": report.report_status,
+            "routed_to": "prosecutor",
+            "overridden_by": custodian.username if custodian else f"ID#{payload.custodian_id}",
+            "message": "Manual override REJECTED — report sent to prosecutor as NOT ADMISSIBLE",
+        }
 
 class ReportOut(BaseModel):
     id: int
     case_number: str
     investigator_id: int
     prosecutor_id: int
+    custodian_id: int | None = None
     pdf_hash: str
     verdict: str | None = None
     filename: str | None = None
+    score: float | None = None
+    report_status: str = "forwarded_to_prosecutor"
+    override_by: int | None = None
+    override_notes: str | None = None
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
@@ -995,13 +1149,20 @@ class ReportOut(BaseModel):
 def list_reports(
     investigator_id: Optional[int] = None,
     prosecutor_id: Optional[int] = None,
+    custodian_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
     query = select(Report).order_by(Report.created_at.desc())
     if investigator_id is not None:
         query = query.where(Report.investigator_id == investigator_id)
     if prosecutor_id is not None:
-        query = query.where(Report.prosecutor_id == prosecutor_id)
+        # Prosecutor sees: forwarded directly OR rejected by forensic officer
+        query = query.where(
+            Report.prosecutor_id == prosecutor_id,
+            Report.report_status.in_(["forwarded_to_prosecutor", "override_rejected", "override_accepted"])
+        )
+    if custodian_id is not None:
+        query = query.where(Report.custodian_id == custodian_id)
     reports = db.execute(query).scalars().all()
     return [
         ReportOut(

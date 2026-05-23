@@ -16,6 +16,9 @@ type Report = {
   pdf_hash: string;
   verdict: string | null;
   filename: string | null;
+  score: number | null;
+  report_status: string;
+  override_notes: string | null;
   created_at: string;
 };
 
@@ -47,6 +50,26 @@ function verdictBadge(v: string | null) {
   else if (vl.includes("suspicious")) cls = "border-amber-200 bg-amber-50 text-amber-900";
   else if (vl.includes("real")) cls = "border-emerald-200 bg-emerald-50 text-emerald-800";
   return <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${cls}`}>{v}</span>;
+}
+
+function reportStatusBanner(status: string, notes: string | null) {
+  if (status === "override_rejected") {
+    return (
+      <div className="mt-3 rounded-xl border border-red-300 bg-red-50 px-3 py-2.5">
+        <div className="flex items-center gap-1.5 text-xs font-bold text-red-800">🔬 NOT ADMISSIBLE — Forensic Override Rejected</div>
+        {notes && <div className="mt-1 text-xs text-red-700 italic">&ldquo;{notes}&rdquo;</div>}
+      </div>
+    );
+  }
+  if (status === "override_accepted") {
+    return (
+      <div className="mt-3 rounded-xl border border-purple-200 bg-purple-50 px-3 py-2.5">
+        <div className="flex items-center gap-1.5 text-xs font-bold text-purple-800">🔬 Manually Verified by Forensic Officer</div>
+        {notes && <div className="mt-1 text-xs text-purple-700 italic">&ldquo;{notes}&rdquo;</div>}
+      </div>
+    );
+  }
+  return null;
 }
 
 function statusBadge(s: string) {
@@ -431,7 +454,15 @@ export default function ProsecutorPage() {
                           <tr key={r.id} className="hover:bg-zinc-50 transition-colors">
                             <td className="px-5 py-4 font-semibold text-[#1f6b2b] font-mono">{r.case_number}</td>
                             <td className="px-5 py-4 text-zinc-500 text-xs max-w-[160px] truncate">{r.filename ?? "—"}</td>
-                            <td className="px-5 py-4">{verdictBadge(r.verdict)}</td>
+                            <td className="px-5 py-4">
+                              {verdictBadge(r.verdict)}
+                              {r.report_status === "override_rejected" && (
+                                <div className="mt-1 inline-flex items-center gap-1 rounded-full border border-red-300 bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-800">🔬 NOT ADMISSIBLE</div>
+                              )}
+                              {r.report_status === "override_accepted" && (
+                                <div className="mt-1 inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[10px] font-bold text-purple-800">🔬 Forensic Override</div>
+                              )}
+                            </td>
                             <td className="px-5 py-4 text-zinc-400 text-xs">
                               <div>{new Date(r.created_at).toLocaleDateString()}</div>
                               <div>{relativeTime(r.created_at)}</div>
@@ -470,6 +501,7 @@ export default function ProsecutorPage() {
                           </div>
                         </div>
                         <div className="mt-4 flex items-center justify-between">{verdictBadge(r.verdict)}<span className="text-xs text-zinc-400">{relativeTime(r.created_at)}</span></div>
+                        {reportStatusBanner(r.report_status, r.override_notes)}
                         <div className="mt-3 rounded-xl border border-zinc-100 bg-zinc-50 px-3 py-2">
                           <div className="text-xs text-zinc-500 mb-0.5 font-semibold">SHA-256 Signature</div>
                           <div className="font-mono text-[10px] text-zinc-400 truncate">{r.pdf_hash}</div>
