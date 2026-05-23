@@ -100,7 +100,7 @@ export default function Home() {
       }
 
       const data = (await res.json().catch(() => null)) as
-        | { ok?: boolean; user?: { role?: string } }
+        | { ok?: boolean; user?: { role?: string; id?: number; username?: string; email?: string } }
         | null;
       const actualRole = (data && data.user && data.user.role) || null;
       if (actualRole && signinRole && actualRole !== signinRole) {
@@ -108,6 +108,11 @@ export default function Home() {
         return;
       }
       const roleFromServer = actualRole || signinRole;
+
+      // Persist user info so role pages can read current user's ID
+      if (data?.user) {
+        localStorage.setItem("user", JSON.stringify(data.user));
+      }
 
       setSigninOpen(false);
       router.push(

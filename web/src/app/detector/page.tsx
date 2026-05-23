@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 type AnalyzeResponse = {
@@ -15,6 +15,21 @@ type AnalyzeResponse = {
   metrics?: Record<string, unknown>;
   explanations?: { tamper?: string; deepfake?: string; verdict?: string };
   events?: Array<Record<string, unknown>>;
+};
+
+type Prosecutor = {
+  id: number;
+  username: string;
+  email: string;
+  organization: string | null;
+};
+
+type ForwardResult = {
+  report_id: number;
+  case_number: string;
+  pdf_hash: string;
+  verdict: string;
+  message: string;
 };
 
 function formatBytes(bytes: number): string {
@@ -41,28 +56,24 @@ function verdictStyles(verdict: string): { badge: string; dot: string } {
   const v = verdict.toLowerCase();
   if (v.includes("high")) {
     return {
-      badge:
-        "border-red-200 bg-red-50 text-red-800",
+      badge: "border-red-200 bg-red-50 text-red-800",
       dot: "bg-red-500",
     };
   }
   if (v.includes("suspicious")) {
     return {
-      badge:
-        "border-amber-200 bg-amber-50 text-amber-900",
+      badge: "border-amber-200 bg-amber-50 text-amber-900",
       dot: "bg-amber-500",
     };
   }
   if (v.includes("real")) {
     return {
-      badge:
-        "border-emerald-200 bg-emerald-50 text-emerald-900",
+      badge: "border-emerald-200 bg-emerald-50 text-emerald-900",
       dot: "bg-emerald-500",
     };
   }
   return {
-    badge:
-      "border-zinc-200 bg-zinc-50 text-zinc-800",
+    badge: "border-zinc-200 bg-zinc-50 text-zinc-800",
     dot: "bg-zinc-400",
   };
 }
@@ -103,15 +114,41 @@ export default function DetectorPage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
 
+  // Forward-to-prosecutor state
+  const [prosecutors, setProsecutors] = useState<Prosecutor[]>([]);
+  const [selectedProsecutorId, setSelectedProsecutorId] = useState<number | null>(null);
+  const [isForwarding, setIsForwarding] = useState(false);
+  const [forwardError, setForwardError] = useState<string | null>(null);
+  const [forwardResult, setForwardResult] = useState<ForwardResult | null>(null);
+
   const apiBaseUrl = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
     return raw.replace(/\/+$/, "");
   }, []);
 
+  // Load prosecutors on mount
+  useEffect(() => {
+    fetch(`${apiBaseUrl}/users/prosecutors`)
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
+      })
+      .then((data: unknown) => {
+        const list = Array.isArray(data) ? (data as Prosecutor[]) : [];
+        setProsecutors(list);
+        if (list.length > 0) setSelectedProsecutorId(list[0].id);
+      })
+      .catch(() => {
+        setProsecutors([]);
+      });
+  }, [apiBaseUrl]);
+
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setError(null);
     setResult(null);
+    setForwardResult(null);
+    setForwardError(null);
 
     if (!file) {
       setError("Please choose a video file.");
@@ -186,6 +223,55 @@ export default function DetectorPage() {
     }
   }
 
+  async function onForwardToProsecutor() {
+    if (!result || !selectedProsecutorId) return;
+    setForwardError(null);
+    setForwardResult(null);
+    setIsForwarding(true);
+
+    try {
+      let investigatorId: number | null = null;
+      try {
+        const raw = localStorage.getItem("user");
+        if (raw) {
+          const u = JSON.parse(raw) as { id?: number };
+          investigatorId = u.id ?? null;
+        }
+      } catch { /* ignore */ }
+
+      const payload = {
+        investigator_id: investigatorId ?? 0,
+        prosecutor_id: selectedProsecutorId,
+        filename: result.filename,
+        verdict: result.verdict,
+        score: result.combined_score ?? result.score,
+        tamper_score: result.tamper_score ?? null,
+        deepfake_score: result.deepfake_score ?? null,
+        signals: result.signals,
+        explanations: result.explanations ?? null,
+        events: result.events ?? [],
+      };
+
+      const resp = await fetch(`${apiBaseUrl}/reports/forward`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Forward failed (${resp.status}): ${text}`);
+      }
+
+      const data = (await resp.json()) as ForwardResult;
+      setForwardResult(data);
+    } catch (e) {
+      setForwardError(e instanceof Error ? e.message : "Failed to forward report");
+    } finally {
+      setIsForwarding(false);
+    }
+  }
+
   return (
     <div className="min-h-screen w-screen bg-gradient-to-b from-white to-zinc-50 p-6 text-zinc-950">
       <main className="mx-auto w-full max-w-6xl">
@@ -214,7 +300,7 @@ export default function DetectorPage() {
             <div className="text-xs font-semibold tracking-widest text-[#0b3a1a]">JURISCAN</div>
             <h1 className="text-3xl font-semibold tracking-tight text-[#0b3a1a]">AI Digital Evidence Verification</h1>
             <p className="max-w-3xl text-sm leading-6 text-zinc-700">
-              Upload a video and we’ll compute signals that can correlate with heavy editing, recompression, tampering, or deepfake synthesis.
+              Upload a video and we'll compute signals that can correlate with heavy editing, recompression, tampering, or deepfake synthesis.
             </p>
           </div>
         </div>
@@ -280,6 +366,8 @@ export default function DetectorPage() {
                   onClick={() => {
                     setError(null);
                     setResult(null);
+                    setForwardResult(null);
+                    setForwardError(null);
                   }}
                   className="inline-flex h-11 items-center justify-center rounded-2xl border border-zinc-200 bg-white px-4 text-sm font-medium text-zinc-900 disabled:opacity-60"
                 >
@@ -299,7 +387,7 @@ export default function DetectorPage() {
             </form>
           </section>
 
-          <section className="lg:col-span-3">
+          <section className="lg:col-span-3 space-y-6">
             <div className="rounded-3xl border border-zinc-200 bg-white p-6 shadow-sm">
               <div className="flex items-start justify-between gap-4">
                 <div>
@@ -312,7 +400,7 @@ export default function DetectorPage() {
 
               {!result ? (
                 <div className="mt-6 rounded-2xl border border-zinc-200 bg-zinc-50 p-6 text-sm text-zinc-600">
-                  No result yet. Upload a video and click “Analyze video”.
+                  No result yet. Upload a video and click "Analyze video".
                 </div>
               ) : (
                 <div className="mt-6 space-y-6">
@@ -449,6 +537,106 @@ export default function DetectorPage() {
                 </div>
               )}
             </div>
+
+            {/* ── Forward to Prosecutor Panel ── */}
+            {result && (
+              <div className="rounded-3xl border border-[#caa54a] bg-white p-6 shadow-sm">
+                <div className="flex items-center gap-3 mb-5">
+                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#0b3a1a]/10 text-lg">📨</div>
+                  <div>
+                    <h2 className="text-sm font-semibold text-[#0b3a1a]">Forward to Prosecutor</h2>
+                    <p className="text-xs text-zinc-500 mt-0.5">Send this verdict to a prosecutor's case portfolio</p>
+                  </div>
+                </div>
+
+                {prosecutors.length === 0 ? (
+                  <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4 text-xs text-zinc-500">
+                    No active prosecutors found. Ask an admin to activate a prosecutor account.
+                  </div>
+                ) : (
+                  <>
+                    <div className="space-y-3">
+                      <label className="block text-xs font-semibold text-zinc-700">
+                        Select Prosecutor
+                      </label>
+                      <select
+                        value={selectedProsecutorId ?? ""}
+                        onChange={(e) => setSelectedProsecutorId(Number(e.target.value))}
+                        className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 focus:border-[#0b3a1a]/60 focus:ring-2 focus:ring-[#0b3a1a]/20"
+                      >
+                        {prosecutors.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.username}
+                            {p.organization ? ` — ${p.organization}` : ""}
+                            {" "}({p.email})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="mt-4 rounded-2xl border border-zinc-100 bg-zinc-50 px-4 py-3 text-xs text-zinc-600 space-y-1">
+                      <div><span className="font-semibold text-zinc-700">File:</span> {result.filename}</div>
+                      <div>
+                        <span className="font-semibold text-zinc-700">Verdict:</span>{" "}
+                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-semibold ${verdictStyles(result.verdict).badge}`}>
+                          {result.verdict}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      disabled={isForwarding || forwardResult !== null}
+                      onClick={() => void onForwardToProsecutor()}
+                      className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-[#0b3a1a] px-4 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#0b3a1a]/25 active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed"
+                    >
+                      {isForwarding ? (
+                        <>
+                          <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                          </svg>
+                          Forwarding…
+                        </>
+                      ) : forwardResult ? (
+                        "✓ Forwarded"
+                      ) : (
+                        "Forward Verdict →"
+                      )}
+                    </button>
+                  </>
+                )}
+
+                {forwardError && (
+                  <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
+                    {forwardError}
+                  </div>
+                )}
+
+                {forwardResult && (
+                  <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-emerald-600 text-lg">✓</span>
+                      <span className="text-sm font-semibold text-emerald-800">Report successfully forwarded</span>
+                    </div>
+                    <div className="grid gap-2 text-xs">
+                      <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-white px-3 py-2">
+                        <span className="font-semibold text-zinc-600">Case ID</span>
+                        <span className="font-mono font-semibold text-[#0b3a1a]">#{forwardResult.report_id}</span>
+                      </div>
+                      <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-white px-3 py-2">
+                        <span className="font-semibold text-zinc-600">Case Number</span>
+                        <span className="font-mono font-semibold text-[#0b3a1a]">{forwardResult.case_number}</span>
+                      </div>
+                      <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2">
+                        <div className="font-semibold text-zinc-600 mb-1">SHA-256 Signature</div>
+                        <div className="font-mono text-zinc-500 break-all leading-relaxed">{forwardResult.pdf_hash}</div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </section>
         </div>
       </main>

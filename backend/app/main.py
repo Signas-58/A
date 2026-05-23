@@ -1,9 +1,11 @@
+import hashlib
 import os
 import logging
 import secrets
 import tempfile
 import time
 from typing import Any
+from datetime import datetime
 from io import BytesIO
 
 from pathlib import Path
@@ -15,7 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import DateTime, Integer, String, Text, create_engine, func, select
+from sqlalchemy import DateTime, Integer, LargeBinary, String, Text, create_engine, func, select
 from typing import List, Optional
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
@@ -75,8 +77,26 @@ class Report(Base):
     case_number: Mapped[str] = mapped_column(String(64), nullable=False)
     investigator_id: Mapped[int] = mapped_column(Integer, nullable=False)
     prosecutor_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    pdf_blob: Mapped[bytes] = mapped_column(Text, nullable=False)
+    pdf_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     pdf_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    verdict: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Disclosure(Base):
+    __tablename__ = "disclosures"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    docket_number: Mapped[str] = mapped_column(String(64), nullable=False)
+    report_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    prosecutor_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    clerk_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    assessment: Mapped[str] = mapped_column(Text, nullable=False)
+    court_date: Mapped[str] = mapped_column(String(64), nullable=False)
+    docket_pdf_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    docket_pdf_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -167,8 +187,51 @@ def health():
 def _startup():
     try:
         Base.metadata.create_all(bind=engine)
+        logger.info("startup: tables created/verified OK")
     except Exception as e:
         logger.warning("startup: failed to create tables: %s", e)
+
+    # Migration: if reports.pdf_blob was created as TEXT instead of LONGBLOB, fix it.
+    try:
+        with engine.connect() as conn:
+            row = conn.exec_driver_sql(
+                "SELECT DATA_TYPE FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() "
+                "AND TABLE_NAME = 'reports' "
+                "AND COLUMN_NAME = 'pdf_blob'"
+            ).fetchone()
+            if row is not None:
+                col_type = str(row[0]).lower()
+                if col_type in ("text", "mediumtext", "tinytext", "varchar"):
+                    logger.warning(
+                        "startup: reports.pdf_blob is %s — migrating to LONGBLOB", col_type
+                    )
+                    conn.exec_driver_sql(
+                        "ALTER TABLE reports MODIFY COLUMN pdf_blob LONGBLOB NOT NULL"
+                    )
+                    conn.commit()
+                    logger.info("startup: reports.pdf_blob migrated to LONGBLOB OK")
+                else:
+                    logger.info("startup: reports.pdf_blob type is %s — OK", col_type)
+    except Exception as e:
+        logger.warning("startup: pdf_blob migration check failed: %s", e)
+
+    # Migration: add missing columns to reports if needed
+    try:
+        with engine.connect() as conn:
+            existing = {row[0] for row in conn.exec_driver_sql(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reports'"
+            ).fetchall()}
+            if "verdict" not in existing:
+                conn.exec_driver_sql("ALTER TABLE reports ADD COLUMN verdict VARCHAR(128) NULL")
+                logger.info("startup: added reports.verdict column")
+            if "filename" not in existing:
+                conn.exec_driver_sql("ALTER TABLE reports ADD COLUMN filename VARCHAR(512) NULL")
+                logger.info("startup: added reports.filename column")
+            conn.commit()
+    except Exception as e:
+        logger.warning("startup: reports column migration failed: %s", e)
 
     try:
         admin_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@juriscan.co.zw").strip()
@@ -321,7 +384,8 @@ class VerdictPdfIn(BaseModel):
     events: list[dict[str, Any]] = Field(default_factory=list)
 
 class ForwardReportIn(BaseModel):
-    case_number: str
+    # case_number is now optional — generated server-side if omitted
+    case_number: str | None = None
     investigator_id: int
     prosecutor_id: int | None = None
     filename: str | None = None
@@ -365,8 +429,8 @@ def _pdf_text(v: Any) -> str:
     return s.encode("latin-1", "replace").decode("latin-1")
 
 
-@app.post("/reports/verdict.pdf")
-def verdict_pdf(payload: VerdictPdfIn):
+def _build_pdf_bytes(payload: VerdictPdfIn) -> bytes:
+    """Render the verdict PDF and return raw bytes."""
     pdf = FPDF(unit="mm", format="A4")
     pdf.set_margins(12, 12, 12)
     pdf.set_auto_page_break(auto=True, margin=12)
@@ -466,25 +530,348 @@ def verdict_pdf(payload: VerdictPdfIn):
         _mc(5, f"- {line}")
 
     out = pdf.output(dest="S")
-    b = out.encode("latin-1", "replace") if isinstance(out, str) else bytes(out)
+    return out.encode("latin-1", "replace") if isinstance(out, str) else bytes(out)
+
+
+@app.post("/reports/verdict.pdf")
+def verdict_pdf(payload: VerdictPdfIn):
+    b = _build_pdf_bytes(payload)
+    fn = payload.filename or "verdict"
     buf = BytesIO(b)
     buf.seek(0)
-
-    safe_name = (fn or "verdict").replace("\\", "_").replace("/", "_")
+    safe_name = fn.replace("\\", "_").replace("/", "_")
     headers = {"Content-Disposition": f"attachment; filename=juriscan-verdict-{safe_name}.pdf"}
     return StreamingResponse(buf, media_type="application/pdf", headers=headers)
+
+
+@app.get("/users/prosecutors", response_model=list[UserOut])
+def list_prosecutors(db: Session = Depends(get_db)):
+    """Return all active prosecutor accounts so the investigator can pick one."""
+    users = db.execute(
+        select(UserAccount)
+        .where(UserAccount.role == "prosecutor", UserAccount.status == "active")
+        .order_by(UserAccount.username)
+    ).scalars().all()
+    return [_user_to_out(u) for u in users]
+
+
+@app.get("/users/clerks", response_model=list[UserOut])
+def list_clerks(db: Session = Depends(get_db)):
+    """Return all active clerk accounts so the prosecutor can pick one."""
+    users = db.execute(
+        select(UserAccount)
+        .where(UserAccount.role == "clerk", UserAccount.status == "active")
+        .order_by(UserAccount.username)
+    ).scalars().all()
+    return [_user_to_out(u) for u in users]
+
+
+# ─── Disclosure helpers ──────────────────────────────────────────────────────
+
+def _generate_docket_number() -> str:
+    import random, string
+    year = time.strftime("%Y")
+    suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    return f"DCK-{year}-{suffix}"
+
+
+def _next_court_datetime(db: Session) -> str:
+    """
+    Auto-schedule the next court slot:
+    - Base: today + 2 days at 09:00
+    - Each new disclosure is 2 hours after the last one
+    - Court day runs 09:00–17:00; overflow spills to next day 09:00
+    """
+    from datetime import datetime as dt, timedelta
+    base = (dt.now() + timedelta(days=2)).replace(hour=9, minute=0, second=0, microsecond=0)
+
+    # Find the latest scheduled court datetime
+    rows = db.execute(select(Disclosure).order_by(Disclosure.created_at.desc())).scalars().all()
+    latest: dt | None = None
+    for d in rows:
+        try:
+            parsed = dt.strptime(d.court_date, "%Y-%m-%d %H:%M")
+            if latest is None or parsed > latest:
+                latest = parsed
+        except Exception:
+            pass
+
+    if latest is None or latest < base:
+        return base.strftime("%Y-%m-%d %H:%M")
+
+    next_slot = latest + timedelta(hours=2)
+    if next_slot.hour >= 17:
+        next_day = (next_slot + timedelta(days=1)).replace(hour=9, minute=0, second=0, microsecond=0)
+        next_slot = next_day
+    return next_slot.strftime("%Y-%m-%d %H:%M")
+
+
+def _build_docket_pdf_bytes(
+    docket_number: str,
+    case_number: str,
+    verdict: str | None,
+    filename: str | None,
+    evidence_pdf_hash: str,
+    assessment: str,
+    court_date: str,
+    prosecutor_name: str,
+    clerk_name: str,
+) -> bytes:
+    """Generate the separate Court Disclosure Docket PDF."""
+    pdf = FPDF(unit="mm", format="A4")
+    pdf.set_margins(15, 15, 15)
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    page_w = float(pdf.w - pdf.l_margin - pdf.r_margin)
+
+    def _mc(h: float, txt: Any):
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(page_w, h, _pdf_text(txt))
+
+    # ── Header ──
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(0, 12, "COURT DISCLOSURE DOCKET", ln=1, align="C")
+    pdf.set_font("Helvetica", "", 10)
+    pdf.set_text_color(90, 90, 90)
+    pdf.cell(0, 6, "Juriscan AI Evidence Verification System", ln=1, align="C")
+    pdf.set_text_color(0, 0, 0)
+    pdf.ln(3)
+    pdf.set_draw_color(31, 107, 43)
+    pdf.line(pdf.l_margin, pdf.get_y(), pdf.w - pdf.r_margin, pdf.get_y())
+    pdf.ln(6)
+
+    # ── Docket info ──
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Docket Information", ln=1)
+    pdf.set_font("Helvetica", "", 10)
+    _mc(6, f"Docket Number:        {docket_number}")
+    _mc(6, f"Linked Case Number:   {case_number}")
+    _mc(6, f"Filing Date/Time:     {time.strftime('%Y-%m-%d %H:%M:%S')}")
+    _mc(6, f"Scheduled Court Date: {court_date}")
+    _mc(6, f"Filed By Prosecutor:  {prosecutor_name}")
+    _mc(6, f"Assigned Clerk:       {clerk_name}")
+    pdf.ln(4)
+
+    # ── Evidence summary ──
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Evidence Summary", ln=1)
+    pdf.set_font("Helvetica", "", 10)
+    _mc(6, f"Evidence File: {filename or '(unknown)'}")
+    _mc(6, f"AI Verdict:    {verdict or '(none)'}")
+    pdf.ln(4)
+
+    # ── Chain of custody hash ──
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Chain of Custody - AI Report SHA-256 Hash", ln=1)
+    pdf.set_font("Courier", "", 9)
+    _mc(5, evidence_pdf_hash)
+    pdf.set_font("Helvetica", "", 10)
+    pdf.ln(4)
+
+    # ── Prosecutor's assessment ──
+    pdf.set_font("Helvetica", "B", 12)
+    pdf.cell(0, 8, "Prosecutor's Legal Assessment", ln=1)
+    pdf.set_font("Helvetica", "", 10)
+    _mc(6, assessment)
+    pdf.ln(10)
+
+    # ── Signature lines ──
+    pdf.set_font("Helvetica", "", 10)
+    pdf.cell(page_w / 2, 6, "_______________________________", ln=0)
+    pdf.cell(page_w / 2, 6, "_______________________________", ln=1)
+    pdf.cell(page_w / 2, 6, "Prosecutor Signature", ln=0)
+    pdf.cell(page_w / 2, 6, "Court Clerk Signature", ln=1)
+
+
+    out = pdf.output(dest="S")
+    return out.encode("latin-1", "replace") if isinstance(out, str) else bytes(out)
+
+
+# ─── Disclosure Pydantic models ──────────────────────────────────────────────
+
+class DisclosureIn(BaseModel):
+    report_id: int
+    prosecutor_id: int
+    clerk_id: int
+    assessment: str
+
+
+class DisclosureOut(BaseModel):
+    id: int
+    docket_number: str
+    report_id: int
+    prosecutor_id: int
+    clerk_id: int
+    assessment: str
+    court_date: str
+    docket_pdf_hash: str
+    status: str
+    created_at: datetime | None = None
+    # Joined from reports table
+    case_number: str | None = None
+    verdict: str | None = None
+    filename: str | None = None
+    evidence_pdf_hash: str | None = None
+    # Joined user names
+    prosecutor_name: str | None = None
+    clerk_name: str | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class DisclosureStatusIn(BaseModel):
+    status: str
+
+
+# ─── Disclosure endpoints ────────────────────────────────────────────────────
+
+@app.post("/disclosures")
+def create_disclosure(payload: DisclosureIn, db: Session = Depends(get_db)):
+    report = db.get(Report, payload.report_id)
+    if not report:
+        raise HTTPException(status_code=404, detail="Report not found")
+
+    prosecutor = db.get(UserAccount, payload.prosecutor_id)
+    clerk = db.get(UserAccount, payload.clerk_id)
+    if not clerk:
+        raise HTTPException(status_code=404, detail="Clerk not found")
+
+    court_date = _next_court_datetime(db)
+    docket_number = _generate_docket_number()
+
+    docket_pdf_bytes = _build_docket_pdf_bytes(
+        docket_number=docket_number,
+        case_number=report.case_number,
+        verdict=report.verdict,
+        filename=report.filename,
+        evidence_pdf_hash=report.pdf_hash,
+        assessment=payload.assessment,
+        court_date=court_date,
+        prosecutor_name=prosecutor.username if prosecutor else f"ID#{payload.prosecutor_id}",
+        clerk_name=clerk.username,
+    )
+    docket_pdf_hash = hashlib.sha256(docket_pdf_bytes).hexdigest()
+
+    disclosure = Disclosure(
+        docket_number=docket_number,
+        report_id=payload.report_id,
+        prosecutor_id=payload.prosecutor_id,
+        clerk_id=payload.clerk_id,
+        assessment=payload.assessment,
+        court_date=court_date,
+        docket_pdf_blob=docket_pdf_bytes,
+        docket_pdf_hash=docket_pdf_hash,
+        status="pending",
+    )
+    db.add(disclosure)
+    db.commit()
+    db.refresh(disclosure)
+    return {
+        "id": disclosure.id,
+        "docket_number": disclosure.docket_number,
+        "court_date": disclosure.court_date,
+        "docket_pdf_hash": disclosure.docket_pdf_hash,
+        "status": disclosure.status,
+        "message": "Disclosure docket forwarded to clerk",
+    }
+
+
+@app.get("/disclosures", response_model=list[DisclosureOut])
+def list_disclosures(
+    clerk_id: Optional[int] = None,
+    prosecutor_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    query = select(Disclosure).order_by(Disclosure.created_at.desc())
+    if clerk_id is not None:
+        query = query.where(Disclosure.clerk_id == clerk_id)
+    if prosecutor_id is not None:
+        query = query.where(Disclosure.prosecutor_id == prosecutor_id)
+
+    disclosures = db.execute(query).scalars().all()
+    result = []
+    for d in disclosures:
+        report = db.get(Report, d.report_id)
+        prosecutor = db.get(UserAccount, d.prosecutor_id)
+        clerk = db.get(UserAccount, d.clerk_id)
+        result.append(DisclosureOut(
+            id=d.id,
+            docket_number=d.docket_number,
+            report_id=d.report_id,
+            prosecutor_id=d.prosecutor_id,
+            clerk_id=d.clerk_id,
+            assessment=d.assessment,
+            court_date=d.court_date,
+            docket_pdf_hash=d.docket_pdf_hash,
+            status=d.status,
+            created_at=d.created_at,
+            case_number=report.case_number if report else None,
+            verdict=report.verdict if report else None,
+            filename=report.filename if report else None,
+            evidence_pdf_hash=report.pdf_hash if report else None,
+            prosecutor_name=prosecutor.username if prosecutor else None,
+            clerk_name=clerk.username if clerk else None,
+        ))
+    return result
+
+
+@app.patch("/disclosures/{disclosure_id}/status")
+def update_disclosure_status(
+    disclosure_id: int,
+    payload: DisclosureStatusIn,
+    db: Session = Depends(get_db),
+):
+    disclosure = db.get(Disclosure, disclosure_id)
+    if not disclosure:
+        raise HTTPException(status_code=404, detail="Disclosure not found")
+    allowed = {"pending", "received", "accepted", "rejected"}
+    if payload.status not in allowed:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {allowed}")
+    disclosure.status = payload.status
+    db.commit()
+    db.refresh(disclosure)
+    return {"id": disclosure.id, "status": disclosure.status, "message": "Status updated"}
+
+
+@app.get("/disclosures/{disclosure_id}/pdf")
+def get_disclosure_pdf(disclosure_id: int, db: Session = Depends(get_db)):
+    d = db.get(Disclosure, disclosure_id)
+    if not d:
+        raise HTTPException(status_code=404, detail="Disclosure not found")
+    blob = d.docket_pdf_blob
+    if isinstance(blob, str):
+        blob = blob.encode("latin-1")
+    buf = BytesIO(blob)
+    buf.seek(0)
+    headers = {"Content-Disposition": f"attachment; filename=docket-{d.docket_number}.pdf"}
+    return StreamingResponse(buf, media_type="application/pdf", headers=headers)
+
+
+def _generate_case_number() -> str:
+
+    """Generate a randomized case number like JSC-2026-A3F7."""
+    import random, string
+    year = time.strftime("%Y")
+    suffix = "".join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    return f"JSC-{year}-{suffix}"
 
 
 @app.post("/reports/forward")
 def forward_report(payload: ForwardReportIn, db: Session = Depends(get_db)):
     prosecutor_id = payload.prosecutor_id
     if prosecutor_id is None:
-        prov = db.execute(select(UserAccount).where(UserAccount.role == "prosecutor")).scalar_one_or_none()
+        prov = db.execute(
+            select(UserAccount).where(UserAccount.role == "prosecutor", UserAccount.status == "active")
+        ).scalar_one_or_none()
         if prov is None:
-            raise HTTPException(status_code=404, detail="No prosecutor user found")
+            raise HTTPException(status_code=404, detail="No active prosecutor found")
         prosecutor_id = prov.id
 
-    temp_payload = VerdictPdfIn(
+    # Auto-generate case number if not supplied
+    case_number = payload.case_number or _generate_case_number()
+
+    # Build PDF bytes directly (no StreamingResponse iteration)
+    pdf_payload = VerdictPdfIn(
         filename=payload.filename,
         verdict=payload.verdict,
         score=payload.score,
@@ -494,20 +881,17 @@ def forward_report(payload: ForwardReportIn, db: Session = Depends(get_db)):
         explanations=payload.explanations,
         events=payload.events,
     )
-    response = verdict_pdf(temp_payload)
-    buf = response.body_iterator.__self__ if hasattr(response.body_iterator, "__self__") else None
-    if buf is None:
-        out = response.body
-        buf = BytesIO(out)
-    pdf_bytes = buf.getvalue()
+    pdf_bytes = _build_pdf_bytes(pdf_payload)
     pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
 
     new_report = Report(
-        case_number=payload.case_number,
+        case_number=case_number,
         investigator_id=payload.investigator_id,
         prosecutor_id=prosecutor_id,
         pdf_blob=pdf_bytes,
         pdf_hash=pdf_hash,
+        verdict=payload.verdict,
+        filename=payload.filename,
     )
     db.add(new_report)
     db.commit()
@@ -516,35 +900,47 @@ def forward_report(payload: ForwardReportIn, db: Session = Depends(get_db)):
         "report_id": new_report.id,
         "case_number": new_report.case_number,
         "pdf_hash": new_report.pdf_hash,
+        "verdict": new_report.verdict,
         "message": "Report forwarded to prosecutor",
     }
 
-# New Pydantic model for report listing
 class ReportOut(BaseModel):
     id: int
     case_number: str
     investigator_id: int
     prosecutor_id: int
     pdf_hash: str
-    created_at: Any
+    verdict: str | None = None
+    filename: str | None = None
+    created_at: datetime | None = None
 
-# Endpoint to list reports with optional filters
-@app.get("/reports", response_model=List[ReportOut])
-def list_reports(investigator_id: Optional[int] = None, prosecutor_id: Optional[int] = None, db: Session = Depends(get_db)):
-    query = select(Report)
+    model_config = {"from_attributes": True}
+
+@app.get("/reports", response_model=list[ReportOut])
+def list_reports(
+    investigator_id: Optional[int] = None,
+    prosecutor_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
+    query = select(Report).order_by(Report.created_at.desc())
     if investigator_id is not None:
         query = query.where(Report.investigator_id == investigator_id)
     if prosecutor_id is not None:
         query = query.where(Report.prosecutor_id == prosecutor_id)
     reports = db.execute(query).scalars().all()
-    return [ReportOut(
-        id=r.id,
-        case_number=r.case_number,
-        investigator_id=r.investigator_id,
-        prosecutor_id=r.prosecutor_id,
-        pdf_hash=r.pdf_hash,
-        created_at=r.created_at,
-    ) for r in reports]
+    return [
+        ReportOut(
+            id=r.id,
+            case_number=r.case_number,
+            investigator_id=r.investigator_id,
+            prosecutor_id=r.prosecutor_id,
+            pdf_hash=r.pdf_hash,
+            verdict=r.verdict,
+            filename=r.filename,
+            created_at=r.created_at,
+        )
+        for r in reports
+    ]
 
 # Endpoint to stream a stored PDF by report id
 @app.get("/reports/{report_id}/pdf")
@@ -552,7 +948,10 @@ def get_report_pdf(report_id: int, db: Session = Depends(get_db)):
     rpt = db.get(Report, report_id)
     if not rpt:
         raise HTTPException(status_code=404, detail="Report not found")
-    buf = BytesIO(rpt.pdf_blob)
+    blob = rpt.pdf_blob
+    if isinstance(blob, str):
+        blob = blob.encode("latin-1")
+    buf = BytesIO(blob)
     headers = {"Content-Disposition": f"attachment; filename=case-{rpt.case_number}.pdf"}
     return StreamingResponse(buf, media_type="application/pdf", headers=headers)
 
