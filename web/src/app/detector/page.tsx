@@ -116,12 +116,14 @@ export default function DetectorPage() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<AnalyzeResponse | null>(null);
 
-  // Forward-to-prosecutor state
+  // Forward state
   const [prosecutors, setProsecutors] = useState<Prosecutor[]>([]);
   const [selectedProsecutorId, setSelectedProsecutorId] = useState<number | null>(null);
   const [isForwarding, setIsForwarding] = useState(false);
   const [forwardError, setForwardError] = useState<string | null>(null);
   const [forwardResult, setForwardResult] = useState<ForwardResult | null>(null);
+  const [videoUploading, setVideoUploading] = useState(false);
+  const [videoUploaded, setVideoUploaded] = useState(false);
 
   const apiBaseUrl = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000";
@@ -151,6 +153,7 @@ export default function DetectorPage() {
     setResult(null);
     setForwardResult(null);
     setForwardError(null);
+    setVideoUploaded(false);
 
     if (!file) {
       setError("Please choose a video file.");
@@ -267,6 +270,24 @@ export default function DetectorPage() {
 
       const data = (await resp.json()) as ForwardResult;
       setForwardResult(data);
+
+      // If routed to forensic officer, auto-upload the video evidence
+      if (data.routed_to === "forensic_officer" && file) {
+        setVideoUploading(true);
+        try {
+          const formData = new FormData();
+          formData.append("file", file, file.name);
+          await fetch(`${apiBaseUrl}/reports/${data.report_id}/video`, {
+            method: "POST",
+            body: formData,
+          });
+          setVideoUploaded(true);
+        } catch {
+          // non-blocking — report is still forwarded
+        } finally {
+          setVideoUploading(false);
+        }
+      }
     } catch (e) {
       setForwardError(e instanceof Error ? e.message : "Failed to forward report");
     } finally {
@@ -639,48 +660,96 @@ export default function DetectorPage() {
                       ? "border-amber-200 bg-amber-50"
                       : "border-emerald-200 bg-emerald-50"
                   }`}>
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">
-                        {forwardResult.routed_to === "forensic_officer" ? "🔬" : "✓"}
-                      </span>
-                      <span className={`text-sm font-semibold ${
-                        forwardResult.routed_to === "forensic_officer" ? "text-amber-800" : "text-emerald-800"
-                      }`}>
-                        {forwardResult.routed_to === "forensic_officer"
-                          ? "Routed to Forensic Officer for manual review"
-                          : "Report forwarded to Prosecutor"}
-                      </span>
-                    </div>
-                    <div className="grid gap-2 text-xs">
-                      <div className={`flex items-center justify-between rounded-xl border px-3 py-2 bg-white ${
-                        forwardResult.routed_to === "forensic_officer" ? "border-amber-100" : "border-emerald-100"
-                      }`}>
-                        <span className="font-semibold text-zinc-600">Case ID</span>
-                        <span className="font-mono font-semibold text-[#0b3a1a]">#{forwardResult.report_id}</span>
-                      </div>
-                      <div className={`flex items-center justify-between rounded-xl border px-3 py-2 bg-white ${
-                        forwardResult.routed_to === "forensic_officer" ? "border-amber-100" : "border-emerald-100"
-                      }`}>
-                        <span className="font-semibold text-zinc-600">Case Number</span>
-                        <span className="font-mono font-semibold text-[#0b3a1a]">{forwardResult.case_number}</span>
-                      </div>
-                      <div className={`flex items-center justify-between rounded-xl border px-3 py-2 bg-white ${
-                        forwardResult.routed_to === "forensic_officer" ? "border-amber-100" : "border-emerald-100"
-                      }`}>
-                        <span className="font-semibold text-zinc-600">Routed to</span>
-                        <span className={`font-semibold ${
-                          forwardResult.routed_to === "forensic_officer" ? "text-amber-700" : "text-emerald-700"
-                        }`}>
-                          {forwardResult.routed_to === "forensic_officer" ? "🔬 Forensic Officer" : "⚖️ Prosecutor"}
-                        </span>
-                      </div>
-                      <div className={`rounded-xl border px-3 py-2 bg-white ${
-                        forwardResult.routed_to === "forensic_officer" ? "border-amber-100" : "border-emerald-100"
-                      }`}>
-                        <div className="font-semibold text-zinc-600 mb-1">SHA-256 Signature</div>
-                        <div className="font-mono text-zinc-500 break-all leading-relaxed">{forwardResult.pdf_hash}</div>
-                      </div>
-                    </div>
+                    {forwardResult.routed_to === "forensic_officer" ? (
+                      /* ── Prominent forensic officer notification ── */
+                      <>
+                        <div className="flex items-start gap-3">
+                          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-amber-100 text-2xl">🔬</div>
+                          <div>
+                            <div className="text-base font-bold text-amber-900">Sent to Forensic Officer</div>
+                            <div className="mt-0.5 text-xs text-amber-700">
+                              This video scored <strong>{result ? `${((result.combined_score ?? result.score ?? 0) * 100).toFixed(1)}%` : "≥30%"}</strong> — above
+                              the 30% threshold. It has been flagged and sent to the Forensic Officer for manual review.
+                              The prosecutor will only receive this case after the forensic officer completes their examination.
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-amber-200 bg-white p-3 space-y-2 text-xs">
+                          <div className="flex justify-between">
+                            <span className="font-semibold text-zinc-600">Case ID</span>
+                            <span className="font-mono font-bold text-[#0b3a1a]">#{forwardResult.report_id}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="font-semibold text-zinc-600">Case Number</span>
+                            <span className="font-mono font-bold text-[#0b3a1a]">{forwardResult.case_number}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="font-semibold text-zinc-600">AI Score</span>
+                            <span className="font-bold text-amber-700">
+                              {result ? `${((result.combined_score ?? result.score ?? 0) * 100).toFixed(1)}%` : "—"}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="font-semibold text-zinc-600">Routed to</span>
+                            <span className="font-bold text-amber-800">🔬 Forensic Officer</span>
+                          </div>
+                          <div className="flex justify-between items-center">
+                            <span className="font-semibold text-zinc-600">Video Evidence</span>
+                            {videoUploading ? (
+                              <span className="flex items-center gap-1 text-amber-600">
+                                <svg className="h-3 w-3 animate-spin" viewBox="0 0 24 24" fill="none">
+                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                                </svg>
+                                Uploading…
+                              </span>
+                            ) : videoUploaded ? (
+                              <span className="font-bold text-emerald-700">✓ Attached</span>
+                            ) : (
+                              <span className="text-zinc-400">Not attached</span>
+                            )}
+                          </div>
+                        </div>
+
+                        <div className="rounded-xl border border-amber-100 bg-white px-3 py-2">
+                          <div className="text-[10px] font-semibold text-zinc-400 uppercase tracking-wider mb-1">SHA-256 Chain of Custody</div>
+                          <div className="font-mono text-[10px] text-zinc-500 break-all leading-relaxed">{forwardResult.pdf_hash}</div>
+                        </div>
+
+                        <div className="rounded-xl border border-amber-200 bg-amber-100/60 px-3 py-2.5 text-xs text-amber-800">
+                          ⚠️ No further action required from you. The Forensic Officer will compare the AI findings against the raw video, then decide whether to accept or reject the evidence.
+                        </div>
+                      </>
+                    ) : (
+                      /* ── Prosecutor routing success ── */
+                      <>
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-600 text-lg">✓</span>
+                          <span className="text-sm font-semibold text-emerald-800">Report forwarded to Prosecutor</span>
+                        </div>
+                        <div className="grid gap-2 text-xs">
+                          <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-white px-3 py-2">
+                            <span className="font-semibold text-zinc-600">Case ID</span>
+                            <span className="font-mono font-semibold text-[#0b3a1a]">#{forwardResult.report_id}</span>
+                          </div>
+                          <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-white px-3 py-2">
+                            <span className="font-semibold text-zinc-600">Case Number</span>
+                            <span className="font-mono font-semibold text-[#0b3a1a]">{forwardResult.case_number}</span>
+                          </div>
+                          <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-white px-3 py-2">
+                            <span className="font-semibold text-zinc-600">AI Score</span>
+                            <span className="font-bold text-emerald-700">
+                              {result ? `${((result.combined_score ?? result.score ?? 0) * 100).toFixed(1)}%` : "—"}
+                            </span>
+                          </div>
+                          <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2">
+                            <div className="font-semibold text-zinc-600 mb-1">SHA-256 Signature</div>
+                            <div className="font-mono text-zinc-500 break-all leading-relaxed">{forwardResult.pdf_hash}</div>
+                          </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
               </div>

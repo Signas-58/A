@@ -21,6 +21,8 @@ type Report = {
   report_status: string;
   override_by: number | null;
   override_notes: string | null;
+  has_video: boolean;
+  video_filename: string | null;
   created_at: string;
 };
 
@@ -398,10 +400,18 @@ export default function CustodianDashboardPage() {
                               </div>
                             </div>
                           </div>
+                          <div className="mt-4 flex flex-wrap gap-2">
                           <a href={`${API_BASE}/reports/${r.id}/pdf`} target="_blank" rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 rounded-full bg-[#1f6b2b] px-3 py-1.5 text-xs font-semibold text-white hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#1f6b2b]/25 transition-all">
                             📄 AI Report PDF
                           </a>
+                          {r.has_video && (
+                            <a href={`${API_BASE}/reports/${r.id}/video`} target="_blank" rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 rounded-full bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-white hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/25 transition-all">
+                              📹 Download Video Evidence
+                            </a>
+                          )}
+                        </div>
                         </div>
 
                         {/* Score prominently */}
@@ -467,6 +477,7 @@ export default function CustodianDashboardPage() {
                           <th className="px-5 py-3 text-left">Status</th>
                           <th className="px-5 py-3 text-left">File</th>
                           <th className="px-5 py-3 text-left">Added</th>
+                          <th className="px-5 py-3 text-left">Video</th>
                           <th className="px-5 py-3 text-left">Report</th>
                         </tr>
                       </thead>
@@ -479,6 +490,14 @@ export default function CustodianDashboardPage() {
                             <td className="px-5 py-4">{statusBadge(r.report_status)}</td>
                             <td className="px-5 py-4 text-xs text-zinc-500 max-w-[160px] truncate">{r.filename ?? "—"}</td>
                             <td className="px-5 py-4 text-xs text-zinc-400">{relativeTime(r.created_at)}</td>
+                            <td className="px-5 py-4">
+                              {r.has_video ? (
+                                <a href={`${API_BASE}/reports/${r.id}/video`} target="_blank" rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-1 rounded-full bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-white hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/25 transition-all">
+                                  📹 Video
+                                </a>
+                              ) : <span className="text-zinc-300 text-xs">—</span>}
+                            </td>
                             <td className="px-5 py-4">
                               <a href={`${API_BASE}/reports/${r.id}/pdf`} target="_blank" rel="noopener noreferrer"
                                 className="rounded-full bg-[#1f6b2b] px-3 py-1.5 text-xs font-semibold text-white hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#1f6b2b]/25 transition-all">

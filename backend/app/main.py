@@ -86,6 +86,9 @@ class Report(Base):
     report_status: Mapped[str] = mapped_column(String(64), nullable=False, default="forwarded_to_prosecutor")
     override_by: Mapped[int | None] = mapped_column(Integer, nullable=True)
     override_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    video_blob: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
+    video_filename: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    video_content_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[Any] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -248,11 +251,14 @@ def _startup():
                 "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'reports'"
             ).fetchall()}
             migrations = {
-                "custodian_id":   "ALTER TABLE reports ADD COLUMN custodian_id INT NULL",
-                "score":          "ALTER TABLE reports ADD COLUMN score FLOAT NULL",
-                "report_status":  "ALTER TABLE reports ADD COLUMN report_status VARCHAR(64) NOT NULL DEFAULT 'forwarded_to_prosecutor'",
-                "override_by":    "ALTER TABLE reports ADD COLUMN override_by INT NULL",
-                "override_notes": "ALTER TABLE reports ADD COLUMN override_notes TEXT NULL",
+                "custodian_id":       "ALTER TABLE reports ADD COLUMN custodian_id INT NULL",
+                "score":              "ALTER TABLE reports ADD COLUMN score FLOAT NULL",
+                "report_status":      "ALTER TABLE reports ADD COLUMN report_status VARCHAR(64) NOT NULL DEFAULT 'forwarded_to_prosecutor'",
+                "override_by":        "ALTER TABLE reports ADD COLUMN override_by INT NULL",
+                "override_notes":     "ALTER TABLE reports ADD COLUMN override_notes TEXT NULL",
+                "video_blob":         "ALTER TABLE reports ADD COLUMN video_blob LONGBLOB NULL",
+                "video_filename":     "ALTER TABLE reports ADD COLUMN video_filename VARCHAR(512) NULL",
+                "video_content_type": "ALTER TABLE reports ADD COLUMN video_content_type VARCHAR(64) NULL",
             }
             for col, sql in migrations.items():
                 if col not in existing:
@@ -1144,6 +1150,8 @@ class ReportOut(BaseModel):
     report_status: str = "forwarded_to_prosecutor"
     override_by: int | None = None
     override_notes: str | None = None
+    has_video: bool = False
+    video_filename: str | None = None
     created_at: datetime | None = None
 
     model_config = {"from_attributes": True}
@@ -1181,9 +1189,16 @@ def list_reports(
             case_number=r.case_number,
             investigator_id=r.investigator_id,
             prosecutor_id=r.prosecutor_id,
+            custodian_id=r.custodian_id,
             pdf_hash=r.pdf_hash,
             verdict=r.verdict,
             filename=r.filename,
+            score=r.score,
+            report_status=r.report_status or "forwarded_to_prosecutor",
+            override_by=r.override_by,
+            override_notes=r.override_notes,
+            has_video=bool(r.video_blob),
+            video_filename=r.video_filename,
             created_at=r.created_at,
         )
         for r in reports
@@ -1203,7 +1218,42 @@ def get_report_pdf(report_id: int, db: Session = Depends(get_db)):
     return StreamingResponse(buf, media_type="application/pdf", headers=headers)
 
 
+@app.post("/reports/{report_id}/video")
+async def upload_report_video(
+    report_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Attach the original video evidence file to a forensic report."""
+    rpt = db.get(Report, report_id)
+    if not rpt:
+        raise HTTPException(status_code=404, detail="Report not found")
+    video_bytes = await file.read()
+    rpt.video_blob = video_bytes
+    rpt.video_filename = file.filename
+    rpt.video_content_type = file.content_type or "video/mp4"
+    db.commit()
+    return {
+        "report_id": report_id,
+        "video_filename": file.filename,
+        "size_bytes": len(video_bytes),
+        "message": "Video attached to forensic report",
+    }
 
+
+@app.get("/reports/{report_id}/video")
+def get_report_video(report_id: int, db: Session = Depends(get_db)):
+    """Stream the original evidence video for forensic officer review."""
+    rpt = db.get(Report, report_id)
+    if not rpt:
+        raise HTTPException(status_code=404, detail="Report not found")
+    if not rpt.video_blob:
+        raise HTTPException(status_code=404, detail="No video attached to this report")
+    buf = BytesIO(rpt.video_blob)
+    ct = rpt.video_content_type or "video/mp4"
+    safe_name = (rpt.video_filename or f"evidence-{rpt.case_number}.mp4").replace('"', '')
+    headers = {"Content-Disposition": f'attachment; filename="{safe_name}"'}
+    return StreamingResponse(buf, media_type=ct, headers=headers)
 @app.post("/auth/login")
 def login(payload: LoginIn, db: Session = Depends(get_db)):
     lock_after = _env_int("LOCK_AFTER_FAILS", 5)
