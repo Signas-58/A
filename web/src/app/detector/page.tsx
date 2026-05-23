@@ -118,6 +118,7 @@ export default function DetectorPage() {
 
   // Forward state
   const [prosecutors, setProsecutors] = useState<Prosecutor[]>([]);
+  const [prosecutorsLoading, setProsecutorsLoading] = useState(true);
   const [selectedProsecutorId, setSelectedProsecutorId] = useState<number | null>(null);
   const [isForwarding, setIsForwarding] = useState(false);
   const [forwardError, setForwardError] = useState<string | null>(null);
@@ -131,7 +132,8 @@ export default function DetectorPage() {
   }, []);
 
   // Load prosecutors on mount
-  useEffect(() => {
+  const loadProsecutors = () => {
+    setProsecutorsLoading(true);
     fetch(`${apiBaseUrl}/users/prosecutors`)
       .then((r) => {
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -142,9 +144,13 @@ export default function DetectorPage() {
         setProsecutors(list);
         if (list.length > 0) setSelectedProsecutorId(list[0].id);
       })
-      .catch(() => {
-        setProsecutors([]);
-      });
+      .catch(() => setProsecutors([]))
+      .finally(() => setProsecutorsLoading(false));
+  };
+
+  useEffect(() => {
+    loadProsecutors();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiBaseUrl]);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -229,10 +235,11 @@ export default function DetectorPage() {
   }
 
   async function onForwardToProsecutor() {
-    if (!result || !selectedProsecutorId) return;
+    if (!result) return;
     setForwardError(null);
     setForwardResult(null);
     setIsForwarding(true);
+    setVideoUploaded(false);
 
     try {
       let investigatorId: number | null = null;
@@ -590,32 +597,37 @@ export default function DetectorPage() {
                   </div>
                 )}
 
-                {prosecutors.length === 0 ? (
-                  <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4 text-xs text-zinc-500">
-                    No active prosecutors found. Ask an admin to activate a prosecutor account.
-                  </div>
-                ) : (
+                {/* Prosecutor selector — optional, backend falls back to first active if omitted */}
+                {!forwardResult && (
                   <>
-                    <div className="space-y-3">
-                      <label className="block text-xs font-semibold text-zinc-700">
-                        Select Prosecutor
-                      </label>
-                      <select
-                        value={selectedProsecutorId ?? ""}
-                        onChange={(e) => setSelectedProsecutorId(Number(e.target.value))}
-                        className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 focus:border-[#0b3a1a]/60 focus:ring-2 focus:ring-[#0b3a1a]/20"
-                      >
-                        {prosecutors.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.username}
-                            {p.organization ? ` — ${p.organization}` : ""}
-                            {" "}({p.email})
-                          </option>
-                        ))}
-                      </select>
-                    </div>
+                    {prosecutorsLoading ? (
+                      <div className="text-xs text-zinc-400">Loading prosecutors…</div>
+                    ) : prosecutors.length === 0 ? (
+                      <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-xs text-zinc-500">
+                        <div className="flex items-center justify-between">
+                          <span>Could not load prosecutors. The system will auto-assign one.</span>
+                          <button type="button" onClick={loadProsecutors}
+                            className="ml-3 text-[#0b3a1a] font-semibold hover:underline">Retry</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <label className="block text-xs font-semibold text-zinc-700">Select Prosecutor</label>
+                        <select
+                          value={selectedProsecutorId ?? ""}
+                          onChange={(e) => setSelectedProsecutorId(Number(e.target.value))}
+                          className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 focus:border-[#0b3a1a]/60 focus:ring-2 focus:ring-[#0b3a1a]/20"
+                        >
+                          {prosecutors.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.username}{p.organization ? ` — ${p.organization}` : ""} ({p.email})
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
 
-                    <div className="mt-4 rounded-2xl border border-zinc-100 bg-zinc-50 px-4 py-3 text-xs text-zinc-600 space-y-1">
+                    <div className="mt-3 rounded-2xl border border-zinc-100 bg-zinc-50 px-4 py-3 text-xs text-zinc-600 space-y-1">
                       <div><span className="font-semibold text-zinc-700">File:</span> {result.filename}</div>
                       <div>
                         <span className="font-semibold text-zinc-700">Verdict:</span>{" "}
@@ -624,29 +636,29 @@ export default function DetectorPage() {
                         </span>
                       </div>
                     </div>
-
-                    <button
-                      type="button"
-                      disabled={isForwarding || forwardResult !== null}
-                      onClick={() => void onForwardToProsecutor()}
-                      className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-[#0b3a1a] px-4 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#0b3a1a]/25 active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed"
-                    >
-                      {isForwarding ? (
-                        <>
-                          <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                          </svg>
-                          Submitting…
-                        </>
-                      ) : forwardResult ? (
-                        "✓ Submitted"
-                      ) : (
-                        "Submit Verdict →"
-                      )}
-                    </button>
                   </>
                 )}
+
+                <button
+                  type="button"
+                  disabled={isForwarding || forwardResult !== null}
+                  onClick={() => void onForwardToProsecutor()}
+                  className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-[#0b3a1a] px-4 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#0b3a1a]/25 active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {isForwarding ? (
+                    <>
+                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                      </svg>
+                      Submitting…
+                    </>
+                  ) : forwardResult ? (
+                    "✓ Submitted"
+                  ) : (
+                    "Submit Verdict →"
+                  )}
+                </button>
 
                 {forwardError && (
                   <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
