@@ -488,41 +488,34 @@ export default function DetectorPage() {
                 </div>
               ) : (
                 <div className="mt-6 space-y-6">
-                  {(() => {
-                    const styles = verdictStyles(result.verdict);
-                    return (
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
-                          <div className="text-xs font-medium text-zinc-500">Verdict</div>
-                          <div className="mt-2 flex items-center gap-2">
-                            <span className={`h-2.5 w-2.5 rounded-full ${styles.dot}`} />
-                            <span
-                              className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${styles.badge}`}
-                            >
-                              {result.verdict}
-                            </span>
-                          </div>
-                          <div className="mt-3 text-xs text-zinc-500">
-                            File: <span className="font-mono">{result.filename}</span>
-                          </div>
-                          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                            <button
-                              type="button"
-                              onClick={() => void onDownloadVerdict()}
-                              className="inline-flex h-10 items-center justify-center rounded-2xl bg-[#0b3a1a] px-4 text-xs font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#0b3a1a]/20 active:translate-y-0"
-                            >
-                              Download verdict
-                            </button>
-                          </div>
-                        </div>
-
-                        <ScoreCard
-                          title="Combined"
-                          score={result.combined_score ?? result.score}
-                        />
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-sm">
+                      <div className="text-xs font-medium text-zinc-500">Verdict</div>
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className={`h-2.5 w-2.5 rounded-full ${verdictStyles(result.verdict).dot}`} />
+                        <span className={`inline-flex items-center rounded-full border px-2.5 py-1 text-xs font-semibold ${verdictStyles(result.verdict).badge}`}>
+                          {result.verdict}
+                        </span>
                       </div>
-                    );
-                  })()}
+                      <div className="mt-3 text-xs text-zinc-500">
+                        File: <span className="font-mono">{result.filename}</span>
+                      </div>
+                      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+                        <button
+                          type="button"
+                          onClick={() => void onDownloadVerdict()}
+                          className="inline-flex h-10 items-center justify-center rounded-2xl bg-[#0b3a1a] px-4 text-xs font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#0b3a1a]/20 active:translate-y-0"
+                        >
+                          Download verdict
+                        </button>
+                      </div>
+                    </div>
+
+                    <ScoreCard
+                      title="Combined"
+                      score={result.combined_score ?? result.score}
+                    />
+                  </div>
 
                   <div className="grid gap-4 sm:grid-cols-2">
                     <ScoreCard title="Tamper" score={result.tamper_score} />
