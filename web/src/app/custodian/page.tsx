@@ -383,10 +383,11 @@ export default function CustodianDashboardPage() {
                 pending.length === 0 ? (
                   <FEmpty text="No pending forensic reviews. Videos scoring ≥ 30% will appear here automatically." />
                 ) : (
-                  <div className="space-y-5">
+                  <div className="space-y-6">
                     {pending.map(r => (
                       <div key={r.id} className="rounded-2xl border border-amber-200 bg-amber-50/30 p-5">
-                        <div className="flex flex-wrap items-start justify-between gap-3">
+                        {/* Card header */}
+                        <div className="flex flex-wrap items-start justify-between gap-3 mb-5">
                           <div className="flex items-center gap-3">
                             <div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-amber-100 text-xl">🔬</div>
                             <div>
@@ -400,49 +401,80 @@ export default function CustodianDashboardPage() {
                               </div>
                             </div>
                           </div>
-                          <div className="mt-4 flex flex-wrap gap-2">
                           <a href={`${API_BASE}/reports/${r.id}/pdf`} target="_blank" rel="noopener noreferrer"
                             className="inline-flex items-center gap-1 rounded-full bg-[#1f6b2b] px-3 py-1.5 text-xs font-semibold text-white hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#1f6b2b]/25 transition-all">
                             📄 AI Report PDF
                           </a>
-                          {r.has_video && (
-                            <a href={`${API_BASE}/reports/${r.id}/video`} target="_blank" rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 rounded-full bg-zinc-800 px-3 py-1.5 text-xs font-semibold text-white hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/25 transition-all">
-                              📹 Download Video Evidence
-                            </a>
-                          )}
-                        </div>
                         </div>
 
-                        {/* Score prominently */}
-                        <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-                          <div className="flex items-center justify-between gap-3 flex-wrap">
-                            <div>
-                              <div className="text-xs font-semibold text-amber-800 uppercase tracking-wider mb-1">AI Confidence Score (triggered forensic review)</div>
-                              {scoreBar(r.score)}
+                        {/* ── Two-column: video player | AI findings ── */}
+                        <div className="grid gap-4 lg:grid-cols-2">
+
+                          {/* LEFT — Inline video player */}
+                          <div className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
+                            <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-100 bg-zinc-50">
+                              <span className="text-xs font-semibold text-zinc-700">📹 Video Evidence</span>
+                              {r.has_video && (
+                                <a href={`${API_BASE}/reports/${r.id}/video`} download
+                                  className="text-[10px] font-semibold text-[#1f6b2b] hover:underline">
+                                  ↓ Download
+                                </a>
+                              )}
                             </div>
-                            <div className="text-right">
-                              <div className="text-[10px] text-amber-700 font-semibold">THRESHOLD</div>
-                              <div className="text-xs text-amber-800">Score ≥ 30% → manual review</div>
+
+                            {r.has_video ? (
+                              <>
+                                <video
+                                  key={r.id}
+                                  controls
+                                  preload="metadata"
+                                  className="w-full max-h-[300px] bg-black block"
+                                  src={`${API_BASE}/reports/${r.id}/video`}
+                                >
+                                  Your browser does not support the video tag.
+                                </video>
+                                {r.video_filename && (
+                                  <div className="px-4 py-2 border-t border-zinc-100 bg-zinc-50 text-[10px] text-zinc-400 truncate">
+                                    {r.video_filename}
+                                  </div>
+                                )}
+                              </>
+                            ) : (
+                              <div className="flex flex-col items-center justify-center gap-2 px-4 py-12 text-center">
+                                <span className="text-4xl">📭</span>
+                                <span className="text-sm font-semibold text-zinc-500">No video attached to this report</span>
+                                <span className="text-xs text-zinc-400 max-w-xs">
+                                  The investigator did not upload the video, or it was submitted before video attachment was enabled.
+                                  Review the AI Report PDF instead.
+                                </span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* RIGHT — AI Findings */}
+                          <div className="space-y-3">
+                            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                              <div className="text-xs font-semibold text-amber-800 uppercase tracking-wider mb-2">AI Confidence Score</div>
+                              {scoreBar(r.score)}
+                              <div className="mt-2 text-[11px] text-amber-700">Score ≥ 30% triggered this forensic review</div>
+                            </div>
+
+                            <div className="grid gap-2 sm:grid-cols-2">
+                              <InfoCell label="AI Verdict"    value={r.verdict ?? "—"} />
+                              <InfoCell label="Evidence File" value={r.filename ?? "—"} />
+                            </div>
+
+                            <div className="rounded-xl border border-zinc-200 bg-white px-3 py-2.5">
+                              <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">SHA-256 Chain of Custody</div>
+                              <div className="font-mono text-[10px] text-zinc-500 break-all leading-relaxed">{r.pdf_hash}</div>
                             </div>
                           </div>
                         </div>
 
-                        <div className="mt-3 grid gap-3 sm:grid-cols-3">
-                          <InfoCell label="AI Verdict"    value={r.verdict ?? "—"} />
-                          <InfoCell label="Evidence File" value={r.filename ?? "—"} />
-                          <InfoCell label="SHA-256 Hash"  value={r.pdf_hash.slice(0, 16) + "…"} />
-                        </div>
-
-                        <div className="mt-3 rounded-xl border border-zinc-200 bg-white px-3 py-2.5">
-                          <div className="text-[10px] font-semibold uppercase tracking-wider text-zinc-400 mb-1">Full SHA-256 Hash (Chain of Custody)</div>
-                          <div className="font-mono text-[10px] text-zinc-500 break-all">{r.pdf_hash}</div>
-                        </div>
-
                         {/* Manual Override Buttons */}
-                        <div className="mt-4 rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
+                        <div className="mt-5 rounded-2xl border border-zinc-200 bg-zinc-50 p-4">
                           <div className="text-xs font-semibold text-zinc-700 mb-3">
-                            Manual Override Decision — compare AI report with raw evidence, then decide:
+                            Manual Override — watch the video above and compare with the AI Report PDF, then decide:
                           </div>
                           <div className="flex flex-wrap gap-3">
                             <button type="button" onClick={() => openOverrideModal(r, "accept_override")}

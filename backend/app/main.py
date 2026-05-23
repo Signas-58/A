@@ -1197,7 +1197,7 @@ def list_reports(
             report_status=r.report_status or "forwarded_to_prosecutor",
             override_by=r.override_by,
             override_notes=r.override_notes,
-            has_video=bool(r.video_blob),
+            has_video=r.video_filename is not None,  # use filename as proxy; avoids loading LONGBLOB
             video_filename=r.video_filename,
             created_at=r.created_at,
         )
@@ -1243,7 +1243,7 @@ async def upload_report_video(
 
 @app.get("/reports/{report_id}/video")
 def get_report_video(report_id: int, db: Session = Depends(get_db)):
-    """Stream the original evidence video for forensic officer review."""
+    """Stream the original evidence video for forensic officer review (inline so browser can play it)."""
     rpt = db.get(Report, report_id)
     if not rpt:
         raise HTTPException(status_code=404, detail="Report not found")
@@ -1252,7 +1252,12 @@ def get_report_video(report_id: int, db: Session = Depends(get_db)):
     buf = BytesIO(rpt.video_blob)
     ct = rpt.video_content_type or "video/mp4"
     safe_name = (rpt.video_filename or f"evidence-{rpt.case_number}.mp4").replace('"', '')
-    headers = {"Content-Disposition": f'attachment; filename="{safe_name}"'}
+    # Use inline so the browser plays it rather than downloading
+    headers = {
+        "Content-Disposition": f'inline; filename="{safe_name}"',
+        "Accept-Ranges": "bytes",
+        "Cache-Control": "no-cache",
+    }
     return StreamingResponse(buf, media_type=ct, headers=headers)
 @app.post("/auth/login")
 def login(payload: LoginIn, db: Session = Depends(get_db)):
