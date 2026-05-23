@@ -1256,7 +1256,7 @@ def get_report_video(report_id: int, db: Session = Depends(get_db)):
     return StreamingResponse(buf, media_type=ct, headers=headers)
 @app.post("/auth/login")
 def login(payload: LoginIn, db: Session = Depends(get_db)):
-    lock_after = _env_int("LOCK_AFTER_FAILS", 5)
+    lock_after = _env_int("LOCK_AFTER_FAILS", 4)  # block after 4 failed attempts
     u = db.execute(
         select(UserAccount).where((UserAccount.username == payload.username) | (UserAccount.email == payload.username))
     ).scalar_one_or_none()
@@ -1266,21 +1266,35 @@ def login(payload: LoginIn, db: Session = Depends(get_db)):
     if payload.role and u.role != payload.role:
         raise HTTPException(status_code=403, detail="Incorrect role")
 
-    if u.status in {"blocked", "disabled", "pending"}:
+    if u.status == "pending":
+        raise HTTPException(status_code=403, detail="account pending — awaiting admin approval")
+    if u.status in {"blocked", "disabled"}:
         raise HTTPException(status_code=403, detail=f"account {u.status}")
-    if u.status == "locked":
-        raise HTTPException(status_code=403, detail="account locked")
+    if u.status in {"locked", "inactive"}:
+        raise HTTPException(
+            status_code=403,
+            detail="account locked after too many failed attempts — contact an administrator to reactivate"
+        )
 
     ok = pwd_context.verify(payload.password, u.password_hash)
     if not ok:
         u.failed_attempts = int(u.failed_attempts or 0) + 1
+        remaining = lock_after - u.failed_attempts
         if u.failed_attempts >= lock_after:
-            u.status = "locked"
+            u.status = "inactive"  # admin must reactivate via /admin/users/{id}/approve
+            db.commit()
+            raise HTTPException(
+                status_code=403,
+                detail=f"account locked after {lock_after} failed attempts — contact an administrator to reactivate"
+            )
         db.commit()
-        raise HTTPException(status_code=401, detail="invalid credentials")
+        raise HTTPException(
+            status_code=401,
+            detail=f"invalid credentials — {remaining} attempt{'s' if remaining != 1 else ''} remaining before lockout"
+        )
 
     u.failed_attempts = 0
-    if u.status != "active":
+    if u.status not in {"active"}:
         u.status = "active"
     db.commit()
     return {"ok": True, "user": _user_to_out(u).model_dump()}

@@ -17,7 +17,7 @@ export default function Home() {
   const [signinError, setSigninError] = useState<string | null>(null);
   const [signinBusy, setSigninBusy] = useState(false);
   const [signupOpen, setSignupOpen] = useState(false);
-  const [signupRole, setSignupRole] = useState<"investigator" | "prosecutor" | "custodian" | "clerk">("investigator");
+  const [signupRole, setSignupRole] = useState<"investigator" | "prosecutor" | "custodian" | "clerk" | "admin" | "judge">("investigator");
   const [signupError, setSignupError] = useState<string | null>(null);
   const [signupSuccess, setSignupSuccess] = useState<string | null>(null);
   const [signupBusy, setSignupBusy] = useState(false);
@@ -311,9 +311,26 @@ export default function Home() {
 
               <form onSubmit={onSubmit} className="space-y-5 px-10 pb-10 pt-8">
                 {signinError ? (
-                  <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-                    {signinError}
-                  </div>
+                  signinError.includes("locked after") || signinError.includes("administrator to reactivate") ? (
+                    <div className="rounded-2xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800">
+                      <div className="font-bold mb-0.5">🔒 Account Locked</div>
+                      <div className="text-xs">{signinError}</div>
+                    </div>
+                  ) : signinError.includes("remaining before lockout") ? (
+                    <div className="rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                      <div className="font-bold mb-0.5">⚠️ Incorrect Password</div>
+                      <div className="text-xs">{signinError}</div>
+                    </div>
+                  ) : signinError.includes("pending") ? (
+                    <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+                      <div className="font-bold mb-0.5">⏳ Account Pending</div>
+                      <div className="text-xs">{signinError}</div>
+                    </div>
+                  ) : (
+                    <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                      {signinError}
+                    </div>
+                  )
                 ) : null}
 
                 <div className="space-y-2">
@@ -554,43 +571,56 @@ export default function Home() {
                   <label className="text-xs font-semibold">
                     Role <span className="text-red-600">*</span>
                   </label>
-                  <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+
+                  {/* Row 1: standard roles */}
+                  <div className="grid grid-cols-3 gap-2 sm:grid-cols-3">
+                    {([
+                      { key: "investigator", label: "Investigator",     icon: "🔍", color: "[#0b3a1a]" },
+                      { key: "prosecutor",   label: "Prosecutor",       icon: "⚖️",  color: "[#0b3a1a]" },
+                      { key: "custodian",    label: "Forensic Officer", icon: "🔬", color: "[#0b3a1a]" },
+                      { key: "clerk",        label: "Court Clerk",      icon: "🏡", color: "[#0b3a1a]" },
+                      { key: "judge",        label: "Judge",            icon: "👨\u200d⚖️", color: "purple-700" },
+                    ] as { key: string; label: string; icon: string; color: string }[]).map(r => (
+                      <button
+                        key={r.key}
+                        type="button"
+                        onClick={() => setSignupRole(r.key as "investigator" | "prosecutor" | "custodian" | "clerk" | "admin" | "judge")}
+                        className={`flex flex-col items-center gap-1 rounded-2xl border px-3 py-3 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
+                          signupRole === r.key
+                            ? r.color === "purple-700"
+                              ? "border-purple-700 bg-purple-50 text-purple-800"
+                              : "border-[#0b3a1a] bg-[#0b3a1a]/10 text-[#0b3a1a]"
+                            : "border-zinc-200 bg-white text-zinc-700"
+                        }`}
+                      >
+                        <span className="text-base">{r.icon}</span>
+                        <span>{r.label}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Admin role — separate row with warning */}
+                  <div className="mt-2">
                     <button
                       type="button"
-                      onClick={() => setSignupRole("investigator")}
-                      className={`rounded-full border px-3 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
-                        signupRole === "investigator" ? "border-[#0b3a1a] bg-[#0b3a1a]/10" : "border-zinc-200 bg-white"
+                      onClick={() => setSignupRole("admin")}
+                      className={`w-full flex items-center justify-center gap-2 rounded-2xl border px-4 py-3 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-red-900/10 ${
+                        signupRole === "admin"
+                          ? "border-red-700 bg-red-50 text-red-800"
+                          : "border-zinc-200 bg-white text-zinc-700"
                       }`}
                     >
-                      Investigator
+                      <span className="text-base">🛡️</span>
+                      <span>System Administrator</span>
+                      {signupRole === "admin" && (
+                        <span className="ml-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-700 uppercase tracking-wide">Requires Approval</span>
+                      )}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setSignupRole("prosecutor")}
-                      className={`rounded-full border px-3 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
-                        signupRole === "prosecutor" ? "border-[#0b3a1a] bg-[#0b3a1a]/10" : "border-zinc-200 bg-white"
-                      }`}
-                    >
-                      Prosecutor
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSignupRole("custodian")}
-                      className={`rounded-full border px-3 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
-                        signupRole === "custodian" ? "border-[#0b3a1a] bg-[#0b3a1a]/10" : "border-zinc-200 bg-white"
-                      }`}
-                    >
-                      Forensic Officer
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setSignupRole("clerk")}
-                      className={`rounded-full border px-3 py-2 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
-                        signupRole === "clerk" ? "border-[#0b3a1a] bg-[#0b3a1a]/10" : "border-zinc-200 bg-white"
-                      }`}
-                    >
-                      Clerk
-                    </button>
+                    {signupRole === "admin" && (
+                      <p className="mt-1.5 text-[11px] text-red-600 text-center">
+                        🛡️ Admin accounts have full system access. Your request will be reviewed and must be manually approved.
+                      </p>
+                    )}
                   </div>
                 </div>
 
