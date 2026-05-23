@@ -183,10 +183,79 @@ export default function DetectorPage() {
 
       const data = (await resp.json()) as AnalyzeResponse;
       setResult(data);
+
+      // AUTO-FORWARD: if score >= 30%, immediately route to forensic officer
+      // (no button click needed — happens automatically after analysis)
+      const combinedScore = data.combined_score ?? data.score ?? 0;
+      if (combinedScore >= 0.30) {
+        await autoForwardToForenesic(data, file);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
     } finally {
       setIsSubmitting(false);
+    }
+  }
+
+  /** Called automatically when score >= 30%. No user interaction needed. */
+  async function autoForwardToForenesic(data: AnalyzeResponse, videoFile: File) {
+    setIsForwarding(true);
+    setForwardError(null);
+    try {
+      let investigatorId: number | null = null;
+      try {
+        const raw = localStorage.getItem("user");
+        if (raw) {
+          const u = JSON.parse(raw) as { id?: number };
+          investigatorId = u.id ?? null;
+        }
+      } catch { /* ignore */ }
+
+      const payload = {
+        investigator_id: investigatorId ?? 0,
+        prosecutor_id: selectedProsecutorId,
+        filename: data.filename,
+        verdict: data.verdict,
+        score: data.combined_score ?? data.score,
+        tamper_score: data.tamper_score ?? null,
+        deepfake_score: data.deepfake_score ?? null,
+        signals: data.signals,
+        explanations: data.explanations ?? null,
+        events: data.events ?? [],
+      };
+
+      const resp = await fetch(`${apiBaseUrl}/reports/forward`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text();
+        throw new Error(`Auto-forward failed (${resp.status}): ${text}`);
+      }
+
+      const result = (await resp.json()) as ForwardResult;
+      setForwardResult(result);
+
+      // Auto-upload video evidence for forensic review
+      if (result.routed_to === "forensic_officer") {
+        setVideoUploading(true);
+        try {
+          const formData = new FormData();
+          formData.append("file", videoFile, videoFile.name);
+          await fetch(`${apiBaseUrl}/reports/${result.report_id}/video`, {
+            method: "POST",
+            body: formData,
+          });
+          setVideoUploaded(true);
+        } catch { /* non-blocking */ }
+        finally { setVideoUploading(false); }
+      }
+    } catch (e) {
+      setForwardError(e instanceof Error ? e.message : "Auto-forward failed");
+    } finally {
+      setIsForwarding(false);
     }
   }
 
@@ -236,6 +305,9 @@ export default function DetectorPage() {
 
   async function onForwardToProsecutor() {
     if (!result) return;
+    // Only allow manual forward for low-score (< 30%) videos
+    const combinedScore = result.combined_score ?? result.score ?? 0;
+    if (combinedScore >= 0.30) return; // should not happen — button is disabled
     setForwardError(null);
     setForwardResult(null);
     setIsForwarding(true);
@@ -277,24 +349,6 @@ export default function DetectorPage() {
 
       const data = (await resp.json()) as ForwardResult;
       setForwardResult(data);
-
-      // If routed to forensic officer, auto-upload the video evidence
-      if (data.routed_to === "forensic_officer" && file) {
-        setVideoUploading(true);
-        try {
-          const formData = new FormData();
-          formData.append("file", file, file.name);
-          await fetch(`${apiBaseUrl}/reports/${data.report_id}/video`, {
-            method: "POST",
-            body: formData,
-          });
-          setVideoUploaded(true);
-        } catch {
-          // non-blocking — report is still forwarded
-        } finally {
-          setVideoUploading(false);
-        }
-      }
     } catch (e) {
       setForwardError(e instanceof Error ? e.message : "Failed to forward report");
     } finally {
@@ -568,97 +622,98 @@ export default function DetectorPage() {
               )}
             </div>
 
-            {/* ── Forward to Prosecutor Panel ── */}
-            {result && (
-              <div className="rounded-3xl border border-[#caa54a] bg-white p-6 shadow-sm">
-                <div className="flex items-center gap-3 mb-5">
-                  <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#0b3a1a]/10 text-lg">📨</div>
-                  <div>
-                    <h2 className="text-sm font-semibold text-[#0b3a1a]">Submit Verdict to System</h2>
-                    <p className="text-xs text-zinc-500 mt-0.5">Routed automatically based on AI confidence score</p>
-                  </div>
-                </div>
-
-                {/* Triage preview — shows BEFORE submitting */}
-                {!forwardResult && result && (
-                  <div className={`mb-4 rounded-2xl border px-4 py-3 text-xs ${
-                    (result.combined_score ?? result.score ?? 0) >= 0.30
-                      ? "border-amber-200 bg-amber-50 text-amber-900"
-                      : "border-emerald-200 bg-emerald-50 text-emerald-900"
-                  }`}>
-                    <div className="font-bold mb-0.5">
-                      {(result.combined_score ?? result.score ?? 0) >= 0.30
-                        ? "🔬 Score ≥ 30% — Will route to Forensic Officer for manual review"
-                        : "✅ Score < 30% — Will route directly to Prosecutor"}
+            {/* ── Submit / Routing Panel ── */}
+            {result && (() => {
+              const score = result.combined_score ?? result.score ?? 0;
+              const isHighScore = score >= 0.30;
+              return (
+                <div className={`rounded-3xl border p-6 shadow-sm ${isHighScore ? "border-amber-300 bg-amber-50/60" : "border-[#caa54a] bg-white"}`}>
+                  <div className="flex items-center gap-3 mb-5">
+                    <div className={`grid h-9 w-9 place-items-center rounded-xl text-lg ${isHighScore ? "bg-amber-100" : "bg-[#0b3a1a]/10"}`}>
+                      {isHighScore ? "🔬" : "📨"}
                     </div>
-                    <div className="opacity-70">
-                      Combined score: <strong>{(((result.combined_score ?? result.score ?? 0)) * 100).toFixed(1)}%</strong> · Threshold: 30%
+                    <div>
+                      <h2 className="text-sm font-semibold text-[#0b3a1a]">
+                        {isHighScore ? "Auto-Routed to Forensic Officer" : "Submit Verdict to System"}
+                      </h2>
+                      <p className="text-xs text-zinc-500 mt-0.5">
+                        {isHighScore
+                          ? `Score ${(score * 100).toFixed(1)}% ≥ 30% — automatically sent for manual review`
+                          : "Score < 30% — route directly to prosecutor"}
+                      </p>
                     </div>
                   </div>
-                )}
 
-                {/* Prosecutor selector — optional, backend falls back to first active if omitted */}
-                {!forwardResult && (
-                  <>
-                    {prosecutorsLoading ? (
-                      <div className="text-xs text-zinc-400">Loading prosecutors…</div>
-                    ) : prosecutors.length === 0 ? (
-                      <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-xs text-zinc-500">
-                        <div className="flex items-center justify-between">
-                          <span>Could not load prosecutors. The system will auto-assign one.</span>
-                          <button type="button" onClick={loadProsecutors}
-                            className="ml-3 text-[#0b3a1a] font-semibold hover:underline">Retry</button>
+                  {/* Low-score path: show prosecutor selector */}
+                  {!isHighScore && !forwardResult && (
+                    <>
+                      {prosecutorsLoading ? (
+                        <div className="text-xs text-zinc-400 mb-3">Loading prosecutors…</div>
+                      ) : prosecutors.length === 0 ? (
+                        <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-xs text-zinc-500 mb-3">
+                          <div className="flex items-center justify-between">
+                            <span>Could not load prosecutors. The system will auto-assign one.</span>
+                            <button type="button" onClick={loadProsecutors}
+                              className="ml-3 text-[#0b3a1a] font-semibold hover:underline">Retry</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-2 mb-3">
+                          <label className="block text-xs font-semibold text-zinc-700">Select Prosecutor</label>
+                          <select
+                            value={selectedProsecutorId ?? ""}
+                            onChange={(e) => setSelectedProsecutorId(Number(e.target.value))}
+                            className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 focus:border-[#0b3a1a]/60 focus:ring-2 focus:ring-[#0b3a1a]/20"
+                          >
+                            {prosecutors.map((p) => (
+                              <option key={p.id} value={p.id}>
+                                {p.username}{p.organization ? ` — ${p.organization}` : ""} ({p.email})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+
+                      <div className="rounded-2xl border border-zinc-100 bg-zinc-50 px-4 py-3 text-xs text-zinc-600 space-y-1 mb-4">
+                        <div><span className="font-semibold text-zinc-700">File:</span> {result.filename}</div>
+                        <div>
+                          <span className="font-semibold text-zinc-700">Verdict:</span>{" "}
+                          <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-semibold ${verdictStyles(result.verdict).badge}`}>
+                            {result.verdict}
+                          </span>
                         </div>
                       </div>
-                    ) : (
-                      <div className="space-y-2">
-                        <label className="block text-xs font-semibold text-zinc-700">Select Prosecutor</label>
-                        <select
-                          value={selectedProsecutorId ?? ""}
-                          onChange={(e) => setSelectedProsecutorId(Number(e.target.value))}
-                          className="h-11 w-full rounded-xl border border-zinc-200 bg-white px-4 text-sm outline-none transition-all duration-200 focus:border-[#0b3a1a]/60 focus:ring-2 focus:ring-[#0b3a1a]/20"
-                        >
-                          {prosecutors.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.username}{p.organization ? ` — ${p.organization}` : ""} ({p.email})
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    )}
-
-                    <div className="mt-3 rounded-2xl border border-zinc-100 bg-zinc-50 px-4 py-3 text-xs text-zinc-600 space-y-1">
-                      <div><span className="font-semibold text-zinc-700">File:</span> {result.filename}</div>
-                      <div>
-                        <span className="font-semibold text-zinc-700">Verdict:</span>{" "}
-                        <span className={`inline-flex items-center rounded-full border px-2 py-0.5 font-semibold ${verdictStyles(result.verdict).badge}`}>
-                          {result.verdict}
-                        </span>
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                <button
-                  type="button"
-                  disabled={isForwarding || forwardResult !== null}
-                  onClick={() => void onForwardToProsecutor()}
-                  className="mt-4 inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-[#0b3a1a] px-4 text-sm font-semibold text-white shadow-sm transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#0b3a1a]/25 active:translate-y-0 disabled:opacity-60 disabled:cursor-not-allowed"
-                >
-                  {isForwarding ? (
-                    <>
-                      <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
-                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
-                      </svg>
-                      Submitting…
                     </>
-                  ) : forwardResult ? (
-                    "✓ Submitted"
-                  ) : (
-                    "Submit Verdict →"
                   )}
-                </button>
+
+                  {/* THE BUTTON — clickable only for low-score; disabled + auto-routing for high-score */}
+                  <button
+                    type="button"
+                    disabled={isHighScore || isForwarding || forwardResult !== null}
+                    onClick={() => void onForwardToProsecutor()}
+                    className={`inline-flex h-11 w-full items-center justify-center gap-2 rounded-2xl px-4 text-sm font-semibold text-white shadow-sm transition-all duration-200 active:translate-y-0 disabled:cursor-not-allowed ${
+                      isHighScore
+                        ? "bg-amber-600/70 cursor-not-allowed opacity-80"
+                        : "bg-[#0b3a1a] hover:-translate-y-0.5 hover:shadow-lg hover:shadow-[#0b3a1a]/25 disabled:opacity-60"
+                    }`}
+                  >
+                    {isForwarding ? (
+                      <>
+                        <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
+                        </svg>
+                        {isHighScore ? "Auto-routing to Forensic Officer…" : "Forwarding to Prosecutor…"}
+                      </>
+                    ) : forwardResult ? (
+                      isHighScore ? "🔬 Sent to Forensic Officer ✓" : "✓ Forwarded to Prosecutor"
+                    ) : isHighScore ? (
+                      "🔬 Auto-routed to Forensic Officer (score ≥ 30%)"
+                    ) : (
+                      "Forward to Prosecutor →"
+                    )}
+                  </button>
+
 
                 {forwardError && (
                   <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-xs text-red-700">
