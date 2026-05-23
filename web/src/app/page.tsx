@@ -13,7 +13,7 @@ export default function Home() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [signinOpen, setSigninOpen] = useState(false);
-  const [signinRole, setSigninRole] = useState<"admin" | "investigator" | "prosecutor" | "custodian" | "clerk">("investigator");
+  const [signinRole, setSigninRole] = useState<"admin" | "investigator" | "prosecutor" | "custodian" | "clerk" | "judge">("investigator");
   const [signinError, setSigninError] = useState<string | null>(null);
   const [signinBusy, setSigninBusy] = useState(false);
   const [signupOpen, setSignupOpen] = useState(false);
@@ -124,7 +124,9 @@ export default function Home() {
               ? "/custodian"
               : roleFromServer === "clerk"
                 ? "/clerk"
-                : "/detector"
+                : roleFromServer === "judge"
+                  ? "/judge"
+                  : "/detector"
       );
     } catch {
       setSigninError("Could not reach backend. Ensure the API is running.");
@@ -395,6 +397,15 @@ export default function Home() {
                       }`}
                     >
                       Clerk
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSigninRole("judge")}
+                      className={`h-10 rounded-full border px-3 text-xs font-semibold transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:shadow-black/10 ${
+                        signinRole === "judge" ? "border-purple-600 bg-purple-50" : "border-zinc-200 bg-white"
+                      }`}
+                    >
+                      ⚖️ Judge
                     </button>
                   </div>
                 </div>

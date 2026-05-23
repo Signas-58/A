@@ -92,7 +92,9 @@ class Disclosure(Base):
     report_id: Mapped[int] = mapped_column(Integer, nullable=False)
     prosecutor_id: Mapped[int] = mapped_column(Integer, nullable=False)
     clerk_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    judge_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     assessment: Mapped[str] = mapped_column(Text, nullable=False)
+    judge_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     court_date: Mapped[str] = mapped_column(String(64), nullable=False)
     docket_pdf_blob: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     docket_pdf_hash: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -232,6 +234,23 @@ def _startup():
             conn.commit()
     except Exception as e:
         logger.warning("startup: reports column migration failed: %s", e)
+
+    # Migration: add missing columns to disclosures if needed
+    try:
+        with engine.connect() as conn:
+            existing = {row[0] for row in conn.exec_driver_sql(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'disclosures'"
+            ).fetchall()}
+            if "judge_id" not in existing:
+                conn.exec_driver_sql("ALTER TABLE disclosures ADD COLUMN judge_id INT NULL")
+                logger.info("startup: added disclosures.judge_id column")
+            if "judge_notes" not in existing:
+                conn.exec_driver_sql("ALTER TABLE disclosures ADD COLUMN judge_notes TEXT NULL")
+                logger.info("startup: added disclosures.judge_notes column")
+            conn.commit()
+    except Exception as e:
+        logger.warning("startup: disclosures column migration failed: %s", e)
 
     try:
         admin_email = os.environ.get("BOOTSTRAP_ADMIN_EMAIL", "admin@juriscan.co.zw").strip()
@@ -566,6 +585,17 @@ def list_clerks(db: Session = Depends(get_db)):
     return [_user_to_out(u) for u in users]
 
 
+@app.get("/users/judges", response_model=list[UserOut])
+def list_judges(db: Session = Depends(get_db)):
+    """Return all active judge accounts so the clerk can assign one."""
+    users = db.execute(
+        select(UserAccount)
+        .where(UserAccount.role == "judge", UserAccount.status == "active")
+        .order_by(UserAccount.username)
+    ).scalars().all()
+    return [_user_to_out(u) for u in users]
+
+
 # ─── Disclosure helpers ──────────────────────────────────────────────────────
 
 def _generate_docket_number() -> str:
@@ -702,7 +732,9 @@ class DisclosureOut(BaseModel):
     report_id: int
     prosecutor_id: int
     clerk_id: int
+    judge_id: int | None = None
     assessment: str
+    judge_notes: str | None = None
     court_date: str
     docket_pdf_hash: str
     status: str
@@ -715,6 +747,7 @@ class DisclosureOut(BaseModel):
     # Joined user names
     prosecutor_name: str | None = None
     clerk_name: str | None = None
+    judge_name: str | None = None
 
     model_config = {"from_attributes": True}
 
@@ -780,6 +813,7 @@ def create_disclosure(payload: DisclosureIn, db: Session = Depends(get_db)):
 def list_disclosures(
     clerk_id: Optional[int] = None,
     prosecutor_id: Optional[int] = None,
+    judge_id: Optional[int] = None,
     db: Session = Depends(get_db),
 ):
     query = select(Disclosure).order_by(Disclosure.created_at.desc())
@@ -787,6 +821,8 @@ def list_disclosures(
         query = query.where(Disclosure.clerk_id == clerk_id)
     if prosecutor_id is not None:
         query = query.where(Disclosure.prosecutor_id == prosecutor_id)
+    if judge_id is not None:
+        query = query.where(Disclosure.judge_id == judge_id)
 
     disclosures = db.execute(query).scalars().all()
     result = []
@@ -794,13 +830,16 @@ def list_disclosures(
         report = db.get(Report, d.report_id)
         prosecutor = db.get(UserAccount, d.prosecutor_id)
         clerk = db.get(UserAccount, d.clerk_id)
+        judge = db.get(UserAccount, d.judge_id) if d.judge_id else None
         result.append(DisclosureOut(
             id=d.id,
             docket_number=d.docket_number,
             report_id=d.report_id,
             prosecutor_id=d.prosecutor_id,
             clerk_id=d.clerk_id,
+            judge_id=d.judge_id,
             assessment=d.assessment,
+            judge_notes=d.judge_notes,
             court_date=d.court_date,
             docket_pdf_hash=d.docket_pdf_hash,
             status=d.status,
@@ -811,6 +850,7 @@ def list_disclosures(
             evidence_pdf_hash=report.pdf_hash if report else None,
             prosecutor_name=prosecutor.username if prosecutor else None,
             clerk_name=clerk.username if clerk else None,
+            judge_name=judge.username if judge else None,
         ))
     return result
 
@@ -824,13 +864,48 @@ def update_disclosure_status(
     disclosure = db.get(Disclosure, disclosure_id)
     if not disclosure:
         raise HTTPException(status_code=404, detail="Disclosure not found")
-    allowed = {"pending", "received", "accepted", "rejected"}
+    allowed = {"pending", "received", "accepted", "rejected", "routed"}
     if payload.status not in allowed:
         raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {allowed}")
     disclosure.status = payload.status
     db.commit()
     db.refresh(disclosure)
     return {"id": disclosure.id, "status": disclosure.status, "message": "Status updated"}
+
+
+class RouteToJudgeIn(BaseModel):
+    judge_id: int
+    judge_notes: str | None = None
+
+
+@app.post("/disclosures/{disclosure_id}/route-to-judge")
+def route_to_judge(
+    disclosure_id: int,
+    payload: RouteToJudgeIn,
+    db: Session = Depends(get_db),
+):
+    disclosure = db.get(Disclosure, disclosure_id)
+    if not disclosure:
+        raise HTTPException(status_code=404, detail="Disclosure not found")
+    judge = db.get(UserAccount, payload.judge_id)
+    if not judge:
+        raise HTTPException(status_code=404, detail="Judge not found")
+    if disclosure.status not in {"accepted", "routed"}:
+        raise HTTPException(status_code=400, detail="Docket must be accepted before routing to judge")
+    disclosure.judge_id = payload.judge_id
+    disclosure.judge_notes = payload.judge_notes or ""
+    disclosure.status = "routed"
+    db.commit()
+    db.refresh(disclosure)
+    judge_obj = db.get(UserAccount, payload.judge_id)
+    return {
+        "id": disclosure.id,
+        "docket_number": disclosure.docket_number,
+        "status": disclosure.status,
+        "judge_id": disclosure.judge_id,
+        "judge_name": judge_obj.username if judge_obj else None,
+        "message": f"Docket routed to judge {judge_obj.username if judge_obj else payload.judge_id}",
+    }
 
 
 @app.get("/disclosures/{disclosure_id}/pdf")
