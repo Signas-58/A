@@ -1100,6 +1100,9 @@ def forensic_review(
 
     report.override_by = payload.custodian_id
     report.override_notes = payload.override_notes or ""
+    # Self-assign custodian if the report arrived before any custodian existed
+    if report.custodian_id is None:
+        report.custodian_id = payload.custodian_id
 
     if payload.action == "accept_override":
         report.report_status = "override_accepted"
@@ -1162,7 +1165,15 @@ def list_reports(
             Report.report_status.in_(["forwarded_to_prosecutor", "override_rejected", "override_accepted"])
         )
     if custodian_id is not None:
-        query = query.where(Report.custodian_id == custodian_id)
+        # Show reports explicitly assigned to this custodian
+        # OR any unassigned (NULL) reports pending forensic review
+        from sqlalchemy import or_
+        query = query.where(
+            or_(
+                Report.custodian_id == custodian_id,
+                (Report.custodian_id == None) & (Report.report_status == "pending_forensic_review")  # noqa: E711
+            )
+        )
     reports = db.execute(query).scalars().all()
     return [
         ReportOut(

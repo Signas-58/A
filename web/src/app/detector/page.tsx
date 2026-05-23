@@ -30,6 +30,8 @@ type ForwardResult = {
   pdf_hash: string;
   verdict: string;
   message: string;
+  routed_to?: string;       // "prosecutor" | "forensic_officer"
+  report_status?: string;   // "forwarded_to_prosecutor" | "pending_forensic_review"
 };
 
 function formatBytes(bytes: number): string {
@@ -544,10 +546,28 @@ export default function DetectorPage() {
                 <div className="flex items-center gap-3 mb-5">
                   <div className="grid h-9 w-9 place-items-center rounded-xl bg-[#0b3a1a]/10 text-lg">📨</div>
                   <div>
-                    <h2 className="text-sm font-semibold text-[#0b3a1a]">Forward to Prosecutor</h2>
-                    <p className="text-xs text-zinc-500 mt-0.5">Send this verdict to a prosecutor's case portfolio</p>
+                    <h2 className="text-sm font-semibold text-[#0b3a1a]">Submit Verdict to System</h2>
+                    <p className="text-xs text-zinc-500 mt-0.5">Routed automatically based on AI confidence score</p>
                   </div>
                 </div>
+
+                {/* Triage preview — shows BEFORE submitting */}
+                {!forwardResult && result && (
+                  <div className={`mb-4 rounded-2xl border px-4 py-3 text-xs ${
+                    (result.combined_score ?? result.score ?? 0) >= 0.30
+                      ? "border-amber-200 bg-amber-50 text-amber-900"
+                      : "border-emerald-200 bg-emerald-50 text-emerald-900"
+                  }`}>
+                    <div className="font-bold mb-0.5">
+                      {(result.combined_score ?? result.score ?? 0) >= 0.30
+                        ? "🔬 Score ≥ 30% — Will route to Forensic Officer for manual review"
+                        : "✅ Score < 30% — Will route directly to Prosecutor"}
+                    </div>
+                    <div className="opacity-70">
+                      Combined score: <strong>{(((result.combined_score ?? result.score ?? 0)) * 100).toFixed(1)}%</strong> · Threshold: 30%
+                    </div>
+                  </div>
+                )}
 
                 {prosecutors.length === 0 ? (
                   <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-4 text-xs text-zinc-500">
@@ -596,12 +616,12 @@ export default function DetectorPage() {
                             <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                             <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
                           </svg>
-                          Forwarding…
+                          Submitting…
                         </>
                       ) : forwardResult ? (
-                        "✓ Forwarded"
+                        "✓ Submitted"
                       ) : (
-                        "Forward Verdict →"
+                        "Submit Verdict →"
                       )}
                     </button>
                   </>
@@ -614,21 +634,49 @@ export default function DetectorPage() {
                 )}
 
                 {forwardResult && (
-                  <div className="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-4 space-y-3">
+                  <div className={`mt-4 rounded-2xl border px-4 py-4 space-y-3 ${
+                    forwardResult.routed_to === "forensic_officer"
+                      ? "border-amber-200 bg-amber-50"
+                      : "border-emerald-200 bg-emerald-50"
+                  }`}>
                     <div className="flex items-center gap-2">
-                      <span className="text-emerald-600 text-lg">✓</span>
-                      <span className="text-sm font-semibold text-emerald-800">Report successfully forwarded</span>
+                      <span className="text-lg">
+                        {forwardResult.routed_to === "forensic_officer" ? "🔬" : "✓"}
+                      </span>
+                      <span className={`text-sm font-semibold ${
+                        forwardResult.routed_to === "forensic_officer" ? "text-amber-800" : "text-emerald-800"
+                      }`}>
+                        {forwardResult.routed_to === "forensic_officer"
+                          ? "Routed to Forensic Officer for manual review"
+                          : "Report forwarded to Prosecutor"}
+                      </span>
                     </div>
                     <div className="grid gap-2 text-xs">
-                      <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-white px-3 py-2">
+                      <div className={`flex items-center justify-between rounded-xl border px-3 py-2 bg-white ${
+                        forwardResult.routed_to === "forensic_officer" ? "border-amber-100" : "border-emerald-100"
+                      }`}>
                         <span className="font-semibold text-zinc-600">Case ID</span>
                         <span className="font-mono font-semibold text-[#0b3a1a]">#{forwardResult.report_id}</span>
                       </div>
-                      <div className="flex items-center justify-between rounded-xl border border-emerald-100 bg-white px-3 py-2">
+                      <div className={`flex items-center justify-between rounded-xl border px-3 py-2 bg-white ${
+                        forwardResult.routed_to === "forensic_officer" ? "border-amber-100" : "border-emerald-100"
+                      }`}>
                         <span className="font-semibold text-zinc-600">Case Number</span>
                         <span className="font-mono font-semibold text-[#0b3a1a]">{forwardResult.case_number}</span>
                       </div>
-                      <div className="rounded-xl border border-emerald-100 bg-white px-3 py-2">
+                      <div className={`flex items-center justify-between rounded-xl border px-3 py-2 bg-white ${
+                        forwardResult.routed_to === "forensic_officer" ? "border-amber-100" : "border-emerald-100"
+                      }`}>
+                        <span className="font-semibold text-zinc-600">Routed to</span>
+                        <span className={`font-semibold ${
+                          forwardResult.routed_to === "forensic_officer" ? "text-amber-700" : "text-emerald-700"
+                        }`}>
+                          {forwardResult.routed_to === "forensic_officer" ? "🔬 Forensic Officer" : "⚖️ Prosecutor"}
+                        </span>
+                      </div>
+                      <div className={`rounded-xl border px-3 py-2 bg-white ${
+                        forwardResult.routed_to === "forensic_officer" ? "border-amber-100" : "border-emerald-100"
+                      }`}>
                         <div className="font-semibold text-zinc-600 mb-1">SHA-256 Signature</div>
                         <div className="font-mono text-zinc-500 break-all leading-relaxed">{forwardResult.pdf_hash}</div>
                       </div>
