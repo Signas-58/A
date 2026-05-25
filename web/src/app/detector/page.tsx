@@ -35,7 +35,7 @@ type ForwardResult = {
 };
 
 function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "â€”";
+  if (!Number.isFinite(bytes) || bytes < 0) return " - ";
   const units = ["B", "KB", "MB", "GB", "TB"];
   let v = bytes;
   let i = 0;
@@ -48,7 +48,7 @@ function formatBytes(bytes: number): string {
 }
 
 function scoreLabel(score: number | null): string {
-  if (score == null || !Number.isFinite(score)) return "â€”";
+  if (score == null || !Number.isFinite(score)) return " - ";
   if (score < 0.35) return "Low";
   if (score < 0.7) return "Medium";
   return "High";
@@ -96,7 +96,7 @@ function ScoreCard({
         <div className="text-xs font-semibold text-zinc-700">{scoreLabel(s)}</div>
       </div>
       <div className="mt-2 flex items-baseline justify-between">
-        <div className="text-2xl font-semibold tabular-nums">{s == null ? "â€”" : s.toFixed(3)}</div>
+        <div className="text-2xl font-semibold tabular-nums">{s == null ? " - " : s.toFixed(3)}</div>
         <div className="text-xs text-zinc-500">{s == null ? "" : `${pct}%`}</div>
       </div>
       <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-zinc-100">
@@ -185,7 +185,7 @@ export default function DetectorPage() {
       setResult(data);
 
       // AUTO-FORWARD: if score >= 30%, immediately route to forensic officer
-      // (no button click needed â€” happens automatically after analysis)
+      // (no button click needed  -  happens automatically after analysis)
       const combinedScore = data.combined_score ?? data.score ?? 0;
       if (combinedScore >= 0.30) {
         await autoForwardToForenesic(data, file);
@@ -307,7 +307,7 @@ export default function DetectorPage() {
     if (!result) return;
     // Only allow manual forward for low-score (< 30%) videos
     const combinedScore = result.combined_score ?? result.score ?? 0;
-    if (combinedScore >= 0.30) return; // should not happen â€” button is disabled
+    if (combinedScore >= 0.30) return; // should not happen  -  button is disabled
     setForwardError(null);
     setForwardResult(null);
     setIsForwarding(true);
@@ -403,7 +403,7 @@ export default function DetectorPage() {
                   </p>
                 </div>
                 <span className="rounded-full border border-zinc-200 px-2 py-1 text-xs text-zinc-600">
-                  {isSubmitting ? "Workingâ€¦" : "Ready"}
+                  {isSubmitting ? "Working..." : "Ready"}
                 </span>
               </div>
 
@@ -426,7 +426,7 @@ export default function DetectorPage() {
                           <span className="text-zinc-700">Size:</span> {formatBytes(file.size)}
                         </div>
                         <div className="truncate">
-                          <span className="text-zinc-700">Type:</span> {file.type || "â€”"}
+                          <span className="text-zinc-700">Type:</span> {file.type || " - "}
                         </div>
                       </div>
                     ) : (
@@ -442,7 +442,7 @@ export default function DetectorPage() {
                   disabled={isSubmitting}
                   className="inline-flex h-11 items-center justify-center rounded-2xl bg-[#0b3a1a] px-4 text-sm font-semibold text-white shadow-sm disabled:opacity-60"
                 >
-                  {isSubmitting ? "Analyzingâ€¦" : "Analyze video"}
+                  {isSubmitting ? "Analyzing..." : "Analyze video"}
                 </button>
                 <button
                   type="button"
@@ -555,15 +555,15 @@ export default function DetectorPage() {
                       <div className="mt-3 grid gap-3 sm:grid-cols-3">
                         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
                           <div className="text-xs font-semibold text-[#0b3a1a]">Verdict</div>
-                          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-700">{result.explanations.verdict || "â€”"}</pre>
+                          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-700">{result.explanations.verdict || " - "}</pre>
                         </div>
                         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
                           <div className="text-xs font-semibold text-[#0b3a1a]">Tamper</div>
-                          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-700">{result.explanations.tamper || "â€”"}</pre>
+                          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-700">{result.explanations.tamper || " - "}</pre>
                         </div>
                         <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3">
                           <div className="text-xs font-semibold text-[#0b3a1a]">Deepfake</div>
-                          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-700">{result.explanations.deepfake || "â€”"}</pre>
+                          <pre className="mt-2 whitespace-pre-wrap break-words text-xs text-zinc-700">{result.explanations.deepfake || " - "}</pre>
                         </div>
                       </div>
                     </div>
@@ -585,11 +585,11 @@ export default function DetectorPage() {
                           <tbody className="divide-y divide-zinc-200 bg-white">
                             {result.events.slice(0, 20).map((ev, i) => (
                               <tr key={i}>
-                                <td className="px-3 py-2 text-zinc-700">{String(ev.type ?? "â€”")}</td>
+                                <td className="px-3 py-2 text-zinc-700">{String(ev.type ?? " - ")}</td>
                                 <td className="px-3 py-2 text-zinc-700 tabular-nums">
-                                  {typeof ev.time_s === "number" ? ev.time_s.toFixed(2) : "â€”"}
+                                  {typeof ev.time_s === "number" ? ev.time_s.toFixed(2) : " - "}
                                 </td>
-                                <td className="px-3 py-2 text-zinc-700 tabular-nums">{typeof ev.frame === "number" ? ev.frame : "â€”"}</td>
+                                <td className="px-3 py-2 text-zinc-700 tabular-nums">{typeof ev.frame === "number" ? ev.frame : " - "}</td>
                                 <td className="px-3 py-2 text-zinc-700">
                                   {ev.type === "abrupt_change" && typeof ev.mad === "number" ? `MAD=${ev.mad.toFixed(1)}` : null}
                                   {ev.type === "deepfake_frame" && typeof ev.prob === "number" ? `prob=${ev.prob.toFixed(3)}` : null}
@@ -615,7 +615,7 @@ export default function DetectorPage() {
               )}
             </div>
 
-            {/* â”€â”€ Submit / Routing Panel â”€â”€ */}
+            {/*  -  -  Submit / Routing Panel  -  -  */}
             {result && (
               <div className={`rounded-3xl border p-6 shadow-sm ${
                 (result.combined_score ?? result.score ?? 0) >= 0.30
@@ -626,7 +626,7 @@ export default function DetectorPage() {
                   <div className={`grid h-9 w-9 place-items-center rounded-xl text-lg ${
                     (result.combined_score ?? result.score ?? 0) >= 0.30 ? "bg-amber-100" : "bg-[#0b3a1a]/10"
                   }`}>
-                    {(result.combined_score ?? result.score ?? 0) >= 0.30 ? "ðŸ”¬" : "ðŸ“¨"}
+                    {(result.combined_score ?? result.score ?? 0) >= 0.30 ? "[F]" : "[S]"}
                   </div>
                   <div>
                     <h2 className="text-sm font-semibold text-[#0b3a1a]">
@@ -636,8 +636,8 @@ export default function DetectorPage() {
                     </h2>
                     <p className="text-xs text-zinc-500 mt-0.5">
                       {(result.combined_score ?? result.score ?? 0) >= 0.30
-                        ? `Score ${((result.combined_score ?? result.score ?? 0) * 100).toFixed(1)}% â‰¥ 30% â€” automatically sent for manual review`
-                        : "Score < 30% â€” route directly to prosecutor"}
+                        ? `Score ${((result.combined_score ?? result.score ?? 0) * 100).toFixed(1)}% >= 30%  -  automatically sent for manual review`
+                        : "Score < 30%  -  route directly to prosecutor"}
                     </p>
                   </div>
                 </div>
@@ -646,7 +646,7 @@ export default function DetectorPage() {
                 {(result.combined_score ?? result.score ?? 0) < 0.30 && !forwardResult && (
                   <>
                     {prosecutorsLoading ? (
-                      <div className="text-xs text-zinc-400 mb-3">Loading prosecutorsâ€¦</div>
+                      <div className="text-xs text-zinc-400 mb-3">Loading prosecutors...</div>
                     ) : prosecutors.length === 0 ? (
                       <div className="rounded-2xl border border-zinc-200 bg-zinc-50 px-4 py-3 text-xs text-zinc-500 mb-3">
                         <div className="flex items-center justify-between">
@@ -665,7 +665,7 @@ export default function DetectorPage() {
                         >
                           {prosecutors.map((p) => (
                             <option key={p.id} value={p.id}>
-                              {p.username}{p.organization ? ` â€” ${p.organization}` : ""} ({p.email})
+                              {p.username}{p.organization ? `  -  ${p.organization}` : ""} ({p.email})
                             </option>
                           ))}
                         </select>
@@ -683,7 +683,7 @@ export default function DetectorPage() {
                   </>
                 )}
 
-                {/* THE BUTTON â€” clickable only for low-score; disabled for high-score */}
+                {/* THE BUTTON  -  clickable only for low-score; disabled for high-score */}
                 <button
                   type="button"
                   disabled={(result.combined_score ?? result.score ?? 0) >= 0.30 || isForwarding || forwardResult !== null}
@@ -701,17 +701,17 @@ export default function DetectorPage() {
                         <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
                       </svg>
                       {(result.combined_score ?? result.score ?? 0) >= 0.30
-                        ? "Auto-routing to Forensic Officerâ€¦"
-                        : "Forwarding to Prosecutorâ€¦"}
+                        ? "Auto-routing to Forensic Officer..."
+                        : "Forwarding to Prosecutor..."}
                     </>
                   ) : forwardResult ? (
                     (result.combined_score ?? result.score ?? 0) >= 0.30
-                      ? "ðŸ”¬ Sent to Forensic Officer âœ“"
-                      : "âœ“ Forwarded to Prosecutor"
+                      ? "Sent to Forensic Officer [OK]"
+                      : "Forwarded to Prosecutor [OK]"
                   ) : (result.combined_score ?? result.score ?? 0) >= 0.30 ? (
-                    "ðŸ”¬ Auto-routed to Forensic Officer (score â‰¥ 30%)"
+                    "[Forensic] Auto-routed - score >= 30%"
                   ) : (
-                    "Forward to Prosecutor â†’"
+                    "Forward to Prosecutor ->"
                   )}
                 </button>
 
@@ -730,11 +730,11 @@ export default function DetectorPage() {
                     {forwardResult.routed_to === "forensic_officer" ? (
                       <>
                         <div className="flex items-start gap-3">
-                          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-amber-100 text-2xl">ðŸ”¬</div>
+                          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-amber-100 text-sm font-bold text-amber-700">[F]</div>
                           <div>
                             <div className="text-base font-bold text-amber-900">Sent to Forensic Officer</div>
                             <div className="mt-0.5 text-xs text-amber-700">
-                              This video scored <strong>{`${((result.combined_score ?? result.score ?? 0) * 100).toFixed(1)}%`}</strong> â€” above
+                              This video scored <strong>{`${((result.combined_score ?? result.score ?? 0) * 100).toFixed(1)}%`}</strong>  -  above
                               the 30% threshold. It has been flagged and sent to the Forensic Officer for manual review.
                               The prosecutor will only receive this case after the forensic officer completes their examination.
                             </div>
@@ -757,7 +757,7 @@ export default function DetectorPage() {
                           </div>
                           <div className="flex justify-between">
                             <span className="font-semibold text-zinc-600">Routed to</span>
-                            <span className="font-bold text-amber-800">ðŸ”¬ Forensic Officer</span>
+                            <span className="font-bold text-amber-800">Forensic Officer</span>
                           </div>
                           <div className="flex justify-between items-center">
                             <span className="font-semibold text-zinc-600">Video Evidence</span>
@@ -767,10 +767,10 @@ export default function DetectorPage() {
                                   <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                                   <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z" />
                                 </svg>
-                                Uploadingâ€¦
+                                Uploading...
                               </span>
                             ) : videoUploaded ? (
-                              <span className="font-bold text-emerald-700">âœ“ Attached</span>
+                              <span className="font-bold text-emerald-700">[OK] Attached</span>
                             ) : (
                               <span className="text-zinc-400">Not attached</span>
                             )}
@@ -781,13 +781,13 @@ export default function DetectorPage() {
                           <div className="font-mono text-[10px] text-zinc-500 break-all leading-relaxed">{forwardResult.pdf_hash}</div>
                         </div>
                         <div className="rounded-xl border border-amber-200 bg-amber-100/60 px-3 py-2.5 text-xs text-amber-800">
-                          âš ï¸ No further action required from you. The Forensic Officer will compare the AI findings against the raw video, then decide whether to accept or reject the evidence.
+                          [!] No further action required. The Forensic Officer will compare the AI findings against the raw video, then decide whether to accept or reject the evidence.
                         </div>
                       </>
                     ) : (
                       <>
                         <div className="flex items-center gap-2">
-                          <span className="text-emerald-600 text-lg">âœ“</span>
+                          <span className="text-emerald-600 text-lg font-bold">[OK]</span>
                           <span className="text-sm font-semibold text-emerald-800">Report forwarded to Prosecutor</span>
                         </div>
                         <div className="grid gap-2 text-xs">
