@@ -1026,7 +1026,7 @@ def forward_report(payload: ForwardReportIn, db: Session = Depends(get_db)):
         # Route to forensic officer (custodian)
         custodian = db.execute(
             select(UserAccount).where(UserAccount.role == "custodian", UserAccount.status == "active")
-        ).scalar_one_or_none()
+        ).scalars().first()
         custodian_id = custodian.id if custodian else None
 
         # Still need a prosecutor_id for schema (use default or payload)
@@ -1034,7 +1034,7 @@ def forward_report(payload: ForwardReportIn, db: Session = Depends(get_db)):
         if prosecutor_id is None:
             prov = db.execute(
                 select(UserAccount).where(UserAccount.role == "prosecutor", UserAccount.status == "active")
-            ).scalar_one_or_none()
+            ).scalars().first()
             prosecutor_id = prov.id if prov else 0
 
         new_report = Report(
@@ -1067,7 +1067,7 @@ def forward_report(payload: ForwardReportIn, db: Session = Depends(get_db)):
         if prosecutor_id is None:
             prov = db.execute(
                 select(UserAccount).where(UserAccount.role == "prosecutor", UserAccount.status == "active")
-            ).scalar_one_or_none()
+            ).scalars().first()
             if prov is None:
                 raise HTTPException(status_code=404, detail="No active prosecutor found")
             prosecutor_id = prov.id
