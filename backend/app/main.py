@@ -1023,11 +1023,10 @@ def forward_report(payload: ForwardReportIn, db: Session = Depends(get_db)):
     pdf_hash = hashlib.sha256(pdf_bytes).hexdigest()
 
     if needs_forensic:
-        # Route to forensic officer (custodian)
-        custodian = db.execute(
-            select(UserAccount).where(UserAccount.role == "custodian", UserAccount.status == "active")
-        ).scalars().first()
-        custodian_id = custodian.id if custodian else None
+        # Leave custodian_id as NULL so ALL active forensic officers
+        # can see this case in their queue. The first one to act on it
+        # self-assigns via the forensic_override endpoint.
+        custodian_id = None
 
         # Still need a prosecutor_id for schema (use default or payload)
         prosecutor_id = payload.prosecutor_id
