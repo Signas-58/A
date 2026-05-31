@@ -164,16 +164,35 @@ def _user_to_out(u: UserAccount) -> UserOut:
 
 app = FastAPI(title="AI Video Detector API")
 
-cors_origins_raw = os.environ.get(
-    "CORS_ORIGINS",
-    "*",
-)
-cors_origins = [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+# Always allow localhost and 127.0.0.1 variants regardless of env setting
+_ALWAYS_ALLOWED = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:8080",
+    "http://127.0.0.1:8080",
+    "http://localhost",
+    "http://127.0.0.1",
+]
+
+cors_origins_raw = os.environ.get("CORS_ORIGINS", "*")
+if cors_origins_raw.strip() == "*":
+    cors_origins = ["*"]
+else:
+    cors_origins = list(set(
+        [o.strip() for o in cors_origins_raw.split(",") if o.strip()]
+        + _ALWAYS_ALLOWED
+    ))
+
+# When allow_origins=["*"], credentials must be False (browser rule).
+# When specific origins listed, credentials can be True.
+_allow_credentials = cors_origins != ["*"]
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_credentials=False,
+    allow_credentials=_allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
