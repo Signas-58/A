@@ -881,11 +881,14 @@ def list_disclosures(
 ):
     query = select(Disclosure).order_by(Disclosure.created_at.desc())
     if clerk_id is not None:
-        query = query.where(Disclosure.clerk_id == clerk_id)
+        # ALL clerks see every disclosure in the docket system —
+        # not just the ones explicitly assigned to their ID.
+        query = query.where(Disclosure.status.in_(["pending", "received", "accepted", "rejected", "routed"]))
     if prosecutor_id is not None:
         query = query.where(Disclosure.prosecutor_id == prosecutor_id)
     if judge_id is not None:
-        query = query.where(Disclosure.judge_id == judge_id)
+        # ALL judges see every disclosure that has been routed to a judge.
+        query = query.where(Disclosure.status == "routed")
 
     disclosures = db.execute(query).scalars().all()
     result = []
@@ -1185,9 +1188,10 @@ def list_reports(
     if investigator_id is not None:
         query = query.where(Report.investigator_id == investigator_id)
     if prosecutor_id is not None:
-        # Prosecutor sees: forwarded directly OR rejected by forensic officer
+        # ALL prosecutors see every report routed to prosecution —
+        # not just their specific assigned ones. Same broadcast
+        # pattern as forensic officer.
         query = query.where(
-            Report.prosecutor_id == prosecutor_id,
             Report.report_status.in_(["forwarded_to_prosecutor", "override_rejected", "override_accepted"])
         )
     if custodian_id is not None:
